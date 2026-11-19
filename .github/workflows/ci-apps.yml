@@ -2,7 +2,7 @@ name: Pipeline CI/CD
 
 on:
   push:
-    branches: ["main", "develop"]
+    branches: ["master"]
     paths:
       - "donation-service/**"
       - "ngo-service/**"
@@ -10,7 +10,7 @@ on:
       - ".github/workflows/ci-apps.yml"
       - ".github/workflows/_reusable-ci-devsecops.yml"
   pull_request:
-    branches: ["main", "develop"]
+    branches: ["master"]
     paths:
       - "donation-service/**"
       - "ngo-service/**"
