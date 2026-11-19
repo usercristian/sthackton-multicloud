@@ -1,0 +1,143 @@
+name: Reusable OCI Terraform Lifecycle
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: "Ação a executar (preflight-only, plan, apply, destroy)"
+        required: true
+        type: string
+      working_directory:
+        description: "Diretório do ambiente Terraform"
+        required: true
+        type: string
+      oci_region:
+        description: "Região OCI"
+        required: false
+        type: string
+        default: "sa-saopaulo-1"
+      state_bucket:
+        description: "Nome do bucket de estado remoto"
+        required: false
+        type: string
+        default: "solidarytech-tfstate-prod"
+      state_key:
+        description: "Caminho do arquivo .tfstate dentro do bucket"
+        required: false
+        type: string
+        default: "oci-prod/terraform.tfstate"
+    secrets:
+      OCI_TENANCY_OCID:
+        required: true
+      OCI_USER_OCID:
+        required: true
+      OCI_FINGERPRINT:
+        required: true
+      OCI_PRIVATE_KEY:
+        required: true
+      OCI_COMPARTMENT_OCID:
+        required: true
+
+jobs:
+  terraform-lifecycle:
+    name: "OCI Infra (${{ inputs.action }})"
+    runs-on: ubuntu-latest
+    env:
+      OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_CLI_COMPARTMENT: ${{ secrets.OCI_COMPARTMENT_OCID }}
+      OCI_CLI_REGION: ${{ inputs.oci_region }}
+      TF_STATE_BUCKET: ${{ inputs.state_bucket }}
+      TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+      TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
+      TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+      TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
+      TF_VAR_region: ${{ inputs.oci_region }}
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar OCI CLI
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install oci-cli
+
+      - name: Preflight & Bootstrap do Backend (OCI Object Storage)
+        id: preflight
+        run: |
+          chmod +x infra/scripts/oci-state-preflight.sh
+          ./infra/scripts/oci-state-preflight.sh
+
+      - name: Setup Terraform (1.12.0+ para backend nativo OCI)
+        if: inputs.action != 'preflight-only'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.12.0"
+
+      - name: Preparar credencial e inicializar Terraform
+        if: inputs.action != 'preflight-only'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          mkdir -p ~/.oci
+          printf "%s\n" "$OCI_CLI_KEY_CONTENT" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+
+          export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
+          export OCI_PRIVATE_KEY_PATH="$HOME/.oci/oci_api_key.pem"
+          export OCI_TENANCY_OCID="$OCI_CLI_TENANCY"
+          export OCI_USER_OCID="$OCI_CLI_USER"
+          export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
+          export OCI_REGION="$OCI_CLI_REGION"
+
+          terraform init -input=false \
+            -backend-config="namespace=${{ steps.preflight.outputs.namespace }}" \
+            -backend-config="bucket=${{ steps.preflight.outputs.bucket }}" \
+            -backend-config="key=${{ inputs.state_key }}" \
+            -backend-config="region=${{ steps.preflight.outputs.region }}"
+
+      - name: Terraform Validate & Plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
+          export OCI_PRIVATE_KEY_PATH="$HOME/.oci/oci_api_key.pem"
+          export OCI_TENANCY_OCID="$OCI_CLI_TENANCY"
+          export OCI_USER_OCID="$OCI_CLI_USER"
+          export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
+          export OCI_REGION="$OCI_CLI_REGION"
+
+          terraform validate
+          terraform plan -input=false -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
+          export OCI_PRIVATE_KEY_PATH="$HOME/.oci/oci_api_key.pem"
+          export OCI_TENANCY_OCID="$OCI_CLI_TENANCY"
+          export OCI_USER_OCID="$OCI_CLI_USER"
+          export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
+          export OCI_REGION="$OCI_CLI_REGION"
+
+          terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
+          export OCI_PRIVATE_KEY_PATH="$HOME/.oci/oci_api_key.pem"
+          export OCI_TENANCY_OCID="$OCI_CLI_TENANCY"
+          export OCI_USER_OCID="$OCI_CLI_USER"
+          export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
+          export OCI_REGION="$OCI_CLI_REGION"
+
+          terraform destroy -input=false -auto-approve
+
+      - name: Limpar chave privada temporária do runner
+        if: always()
+        run: rm -f ~/.oci/oci_api_key.pem
