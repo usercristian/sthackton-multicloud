@@ -8,11 +8,11 @@ on:
         required: true
         type: string
       service_path:
-        description: "Caminho relativo do microsserviço no repositório"
+        description: "Caminho relativo do microsserviço"
         required: true
         type: string
       language:
-        description: "Linguagem principal do serviço (go ou python)"
+        description: "Linguagem do serviço (go ou python)"
         required: true
         type: string
 
@@ -21,7 +21,7 @@ jobs:
   # ESTÁGIO 1: Build & Unit Test
   # =========================================================================
   build-and-test:
-    name: "1. Build & Test (${{ inputs.service_name }})"
+    name: "1. Build & Test"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout do código
@@ -59,7 +59,7 @@ jobs:
   # ESTÁGIO 2: Linter / Static Analysis
   # =========================================================================
   lint:
-    name: "2. Linter (${{ inputs.service_name }})"
+    name: "2. Linter"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout do código
@@ -71,12 +71,13 @@ jobs:
         with:
           go-version-file: ${{ inputs.service_path }}/go.mod
 
-      - name: Linter Go (golangci-lint)
+      - name: Linter Go (go vet + golangci-lint)
         if: inputs.language == 'go'
-        uses: golangci/golangci-lint-action@v6
-        with:
-          working-directory: ${{ inputs.service_path }}
-          version: latest
+        working-directory: ${{ inputs.service_path }}
+        run: |
+          go vet ./...
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+          golangci-lint run
 
       - name: Setup Python
         if: inputs.language == 'python'
@@ -95,7 +96,7 @@ jobs:
   # ESTÁGIO 3: Security Scan (SAST & SCA com Regra de Bloqueio CRITICAL)
   # =========================================================================
   security-sast-sca:
-    name: "3. SAST & SCA (${{ inputs.service_name }})"
+    name: "3. SAST & SCA"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout do código
@@ -109,11 +110,10 @@ jobs:
 
       - name: SAST Go (gosec)
         if: inputs.language == 'go'
-        uses: securego/gosec@master
-        with:
-          args: "-severity high -confidence medium ./..."
-        env:
-          GO111MODULE: "on"
+        working-directory: ${{ inputs.service_path }}
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -severity high ./...
 
       - name: Setup Python
         if: inputs.language == 'python'
@@ -128,20 +128,19 @@ jobs:
           python -m pip install --upgrade pip bandit
           bandit -r . -lll
 
+      - name: Instalar Trivy CLI
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
       - name: SCA & Secret Scan (Trivy FS — Bloqueia em CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: "fs"
-          scan-ref: ${{ inputs.service_path }}
-          scanners: "vuln,secret"
-          severity: "CRITICAL"
-          exit-code: "1"
+        run: |
+          trivy fs --scanners vuln,secret --severity CRITICAL --exit-code 1 ${{ inputs.service_path }}
 
   # =========================================================================
   # ESTÁGIO 4: Docker Build (ARM64) & Container Security Scan
   # =========================================================================
   docker-build-and-scan:
-    name: "4. Docker Build & Scan (${{ inputs.service_name }})"
+    name: "4. Docker Build & Scan"
     needs: [build-and-test, lint, security-sast-sca]
     runs-on: ubuntu-latest
     steps:
@@ -166,10 +165,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Instalar Trivy CLI
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
       - name: Container Scan (Trivy Image — Bloqueia em CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: solidarytech/${{ inputs.service_name }}:${{ github.sha }}
-          format: "table"
-          severity: "CRITICAL"
-          exit-code: "1"
+        run: |
+          trivy image --severity CRITICAL --exit-code 1 solidarytech/${{ inputs.service_name }}:${{ github.sha }}
