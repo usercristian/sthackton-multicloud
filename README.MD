@@ -91,24 +91,34 @@ O pipeline configura:
 
 O build de container não publica imagens nem realiza deploy. Não há workflows de Terraform, Kubernetes ou GitOps neste repositório. Atualmente não há arquivos de teste dos serviços; o pipeline executa os comandos de teste, mas isso não significa que existam testes funcionais implementados.
 
+## Infraestrutura como Código (IaC) e Automação OCI
+
+A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) está organizada de forma modular em `infra/`:
+
+- `infra/scripts/oci-state-preflight.sh`: script idempotente executado antes do `terraform init` para validar ou criar o bucket privado e versionado de estado remoto (`solidarytech-tfstate-prod`) no Object Storage.
+- `infra/modules/oci/network/`: módulo de rede contendo VCN (`10.0.0.0/16`), Internet Gateway, NAT Gateway, Service Gateway, tabelas de roteamento, Security Lists e sub-redes isoladas (`public-lb`, `private-oke` e `private-db`).
+- `infra/environments/oci-prod/`: composição do ambiente principal utilizando o backend nativo `backend "oci"` (Terraform `1.12.0+`).
+- `.github/workflows/infra-oci-lifecycle.yml` e `.github/workflows/_reusable-terraform.yml`: pipeline manual (`workflow_dispatch`) com controle de concorrência (`terraform-oci-prod`) para executar `preflight-only`, `plan`, `apply` e `destroy`, gerando sumário detalhado em `$GITHUB_STEP_SUMMARY`.
+
 ## Estado do projeto
 
 ### Presente no repositório
 
-- Código dos três serviços e endpoints básicos de saúde e operação.
-- Dockerfiles e arquivos de dependências.
+- Código dos três microsserviços (`ngo-service`, `donation-service`, `volunteer-service`) com endpoints básicos de saúde e operação.
+- Dockerfiles parametrizados para `linux/arm64` e arquivos de dependências.
 - Scripts SQL iniciais para os bancos PostgreSQL dos serviços de ONGs e doações.
-- Workflows de CI, análise estática, scans de segurança e build/scan de imagens.
+- Pipeline de CI e DevSecOps (`ci-apps.yml` e `_reusable-ci-devsecops.yml`) com detecção seletiva de alterações (`Scope Discovery`), linters, análise estática de segurança (gosec, Bandit, Trivy) e scan de imagens.
+- Preflight automatizado de estado remoto (`infra/scripts/oci-state-preflight.sh`) com bucket `solidarytech-tfstate-prod` validado na OCI.
+- Módulo de rede OCI (`infra/modules/oci/network`) e composição `infra/environments/oci-prod` validados via `terraform apply` no GitHub Actions.
+- Workflows de ciclo de vida da infraestrutura OCI (`infra-oci-lifecycle.yml` e `_reusable-terraform.yml`) com sumário de execução.
 - Regras de governança de engenharia em [`AGENTS.md`](./AGENTS.md).
 
 ### Planejado, ainda não implementado aqui
 
-A arquitetura-alvo descrita em `AGENTS.md` prevê OCI como provedor principal e AWS para mensageria, NoSQL e recuperação de desastres. Porém, este repositório ainda não contém a infraestrutura ou os recursos operacionais para materializar essa arquitetura. Permanecem pendentes:
+- Módulos Terraform restantes da OCI (`infra/modules/oci/oke` para cluster Kubernetes ARM64 + OCIR, e `infra/modules/oci/postgres` para banco relacional gerenciado).
+- Módulos Terraform e ambiente AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby (aguardando liberação de acesso ao ambiente AWS).
+- Manifestos Kubernetes, Helm/Kustomize e entrega contínua via ArgoCD (GitOps).
+- Docker Compose e configuração de ambiente de desenvolvimento local reproduzível.
+- Testes automatizados funcionais dos microsserviços.
+- Dashboards de observabilidade, SLIs/SLOs, APM/AIOps e validação de Disaster Recovery.
 
-- Módulos Terraform, ambientes OCI/AWS e backends de estado.
-- Recursos AWS (SQS/DLQ e DynamoDB) provisionados por IaC.
-- Cluster Kubernetes, manifestos de aplicação e entrega via ArgoCD.
-- Workflows de provisionamento/destruição de infraestrutura.
-- Docker Compose e configuração de ambiente de desenvolvimento reproduzível.
-- Testes automatizados dos serviços.
-- Dashboards, SLIs/SLOs, APM/AIOps e validação de Disaster Recovery.

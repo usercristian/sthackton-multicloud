@@ -122,6 +122,9 @@ Approved Architectural Baseline (ACP-001 Rev. 2):
 - Enforce FinOps tags across all cloud resources (`Project = "Solidary Tech"`, `Environment = "Production"`, `CostCenter = "NGO-Core"`).
 - Never execute destructive infrastructure operations (`terraform apply`, `terraform destroy`) automatically without explicit human trigger/approval.
 - Never expose credentials, tokens, private keys, or sensitive configuration in source code or documentation.
+- Use the native OCI Terraform backend (`backend "oci"`, Terraform `>= 1.12.0`) for primary infrastructure state, backed by a deterministic, private, versioned Object Storage bucket (`solidarytech-tfstate-prod`) validated prior to `terraform init` via `infra/scripts/oci-state-preflight.sh`.
+- Serialize infrastructure lifecycle executions via GitHub Actions `concurrency` groups (`cancel-in-progress: false`) to prevent concurrent state corruption.
+- Generate structured Markdown execution summaries (`$GITHUB_STEP_SUMMARY`) in infrastructure and delivery workflows, reporting step outcomes, failure points, and provisioned outputs.
 
 ## 6. TESTING, VALIDATION AND WORKFLOW
 

@@ -1,4 +1,4 @@
-name: Infraestrutura OCI — Ciclo de Vida
+name: Infraestrutura OCI
 
 on:
   workflow_dispatch:
