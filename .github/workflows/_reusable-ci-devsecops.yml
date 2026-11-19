@@ -1,4 +1,4 @@
-name: Reusable CI & DevSecOps Pipeline
+name: Reusable CI & DevSecOps
 
 on:
   workflow_call:
@@ -76,9 +76,9 @@ jobs:
         working-directory: ${{ inputs.service_path }}
         run: |
           go vet ./...
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
           golangci-lint run
-
+          
       - name: Setup Python
         if: inputs.language == 'python'
         uses: actions/setup-python@v5

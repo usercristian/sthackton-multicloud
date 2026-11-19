@@ -1,4 +1,4 @@
-name: CI & DevSecOps
+name: Pipeline CI & DevSecOps
 
 on:
   push:
@@ -24,8 +24,9 @@ jobs:
     name: Detectar Serviços Alterados
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
-      has_changes: ${{ steps.build-matrix.outputs.has_changes }}
+      donation: ${{ steps.eval.outputs.donation }}
+      ngo: ${{ steps.eval.outputs.ngo }}
+      volunteer: ${{ steps.eval.outputs.volunteer }}
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
@@ -45,49 +46,45 @@ jobs:
             workflows:
               - '.github/workflows/**'
 
-      - name: Montar matriz dinâmica de execução
-        id: build-matrix
+      - name: Avaliar flags de execução por serviço
+        id: eval
         run: |
-          RUN_ALL="false"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filter.outputs.workflows }}" == "true" ]]; then
-            RUN_ALL="true"
-          fi
-
-          MATRIX="[]"
-
-          if [[ "$RUN_ALL" == "true" || "${{ steps.filter.outputs.donation }}" == "true" ]]; then
-            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"name":"donation-service","path":"donation-service","language":"go"}]')
-          fi
-
-          if [[ "$RUN_ALL" == "true" || "${{ steps.filter.outputs.ngo }}" == "true" ]]; then
-            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"name":"ngo-service","path":"ngo-service","language":"python"}]')
-          fi
-
-          if [[ "$RUN_ALL" == "true" || "${{ steps.filter.outputs.volunteer }}" == "true" ]]; then
-            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"name":"volunteer-service","path":"volunteer-service","language":"python"}]')
-          fi
-
-          COUNT=$(echo "$MATRIX" | jq 'length')
-          if [[ "$COUNT" -gt 0 ]]; then
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "donation=true" >> "$GITHUB_OUTPUT"
+            echo "ngo=true" >> "$GITHUB_OUTPUT"
+            echo "volunteer=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "donation=${{ steps.filter.outputs.donation || 'false' }}" >> "$GITHUB_OUTPUT"
+            echo "ngo=${{ steps.filter.outputs.ngo || 'false' }}" >> "$GITHUB_OUTPUT"
+            echo "volunteer=${{ steps.filter.outputs.volunteer || 'false' }}" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "Matriz gerada: $MATRIX"
-
-  pipeline:
-    name: ${{ matrix.name }}
+  donation-service:
+    name: donation-service
     needs: detect-changes
-    if: needs.detect-changes.outputs.has_changes == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
-
+    if: needs.detect-changes.outputs.donation == 'true'
     uses: ./.github/workflows/_reusable-ci-devsecops.yml
     with:
-      service_name: ${{ matrix.name }}
-      service_path: ${{ matrix.path }}
-      language: ${{ matrix.language }}
+      service_name: donation-service
+      service_path: donation-service
+      language: go
+
+  ngo-service:
+    name: ngo-service
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ngo == 'true'
+    uses: ./.github/workflows/_reusable-ci-devsecops.yml
+    with:
+      service_name: ngo-service
+      service_path: ngo-service
+      language: python
+
+  volunteer-service:
+    name: volunteer-service
+    needs: detect-changes
+    if: needs.detect-changes.outputs.volunteer == 'true'
+    uses: ./.github/workflows/_reusable-ci-devsecops.yml
+    with:
+      service_name: volunteer-service
+      service_path: volunteer-service
+      language: python
