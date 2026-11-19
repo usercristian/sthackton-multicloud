@@ -1,8 +1,10 @@
-# SolidaryTech
+# Ecossistema Cloud-Native, SRE, FinOps e Disaster Recovery
 
-SolidaryTech é um projeto acadêmico de uma plataforma sem fins lucrativos que conecta ONGs, doadores e voluntários. Este repositório contém três microsserviços de aplicação, seus Dockerfiles e workflows de CI/DevSecOps.
+## 1. Visão Geral e Contexto Acadêmico
 
-**Status:** os serviços e o pipeline de validação estão no repositório. A arquitetura multicloud, a infraestrutura e a operação descritas como objetivos ainda não estão provisionadas ou configuradas aqui.
+SolidaryTech é uma plataforma sem fins lucrativos que conecta ONGs a doadores e voluntários em todo o Brasil. Este repositório reúne a implementação do Tech Challenge (Hackathon Fase 5 — POS TECH), cujo objetivo é comprovar maturidade operacional, financeira e de resiliência em nuvem aplicando práticas de DevOps, SRE, FinOps, Segurança, ITSM/AIOps e Disaster Recovery.
+
+Diretriz central: toda a infraestrutura e entrega de software seguem automação declarativa (IaC e GitOps), sem provisionamento manual em console ou deploys manuais via `kubectl`.
 
 ## Serviços
 
