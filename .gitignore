@@ -1,0 +1,38 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.*
+
+# Go
+bin/
+*.test
+*.out
+/donation-service/donation-service
+
+# Terraform state and local configuration
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
+
+# Logs, editor files, and OS metadata
+*.log
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

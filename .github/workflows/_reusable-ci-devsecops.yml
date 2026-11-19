@@ -1,4 +1,4 @@
-name: Reusable CI & DevSecOps
+name: Reusable CI/DevSecOps
 
 on:
   workflow_call:
@@ -76,7 +76,7 @@ jobs:
         working-directory: ${{ inputs.service_path }}
         run: |
           go vet ./...
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
           golangci-lint run
           
       - name: Setup Python
