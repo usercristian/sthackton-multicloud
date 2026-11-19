@@ -1,4 +1,4 @@
-ARG GO_VERSION=1.21-alpine
+ARG GO_VERSION=1.25.7-alpine
 ARG ALPINE_VERSION=3.20
 
 # Estágio 1: Compilação do binário estático
