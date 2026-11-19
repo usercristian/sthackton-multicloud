@@ -1,0 +1,42 @@
+name: CI & DevSecOps — Microsserviços
+
+on:
+  push:
+    branches: ["main", "develop"]
+    paths:
+      - "donation-service/**"
+      - "ngo-service/**"
+      - "volunteer-service/**"
+      - ".github/workflows/ci-apps.yml"
+      - ".github/workflows/_reusable-ci-devsecops.yml"
+  pull_request:
+    branches: ["main", "develop"]
+    paths:
+      - "donation-service/**"
+      - "ngo-service/**"
+      - "volunteer-service/**"
+      - ".github/workflows/ci-apps.yml"
+      - ".github/workflows/_reusable-ci-devsecops.yml"
+  workflow_dispatch:
+
+jobs:
+  services-pipeline:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service_name: donation-service
+            service_path: donation-service
+            language: go
+          - service_name: ngo-service
+            service_path: ngo-service
+            language: python
+          - service_name: volunteer-service
+            service_path: volunteer-service
+            language: python
+
+    uses: ./.github/workflows/_reusable-ci-devsecops.yml
+    with:
+      service_name: ${{ matrix.service_name }}
+      service_path: ${{ matrix.service_path }}
+      language: ${{ matrix.language }}
