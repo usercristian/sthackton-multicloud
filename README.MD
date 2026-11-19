@@ -6,7 +6,7 @@ SolidaryTech é uma plataforma sem fins lucrativos que conecta ONGs a doadores e
 
 Diretriz central: toda a infraestrutura e entrega de software seguem automação declarativa (IaC e GitOps), sem provisionamento manual em console ou deploys manuais via `kubectl`.
 
-## Serviços
+ ## Serviços
 
 | Serviço | Tecnologia | Porta padrão | Endpoints | Persistência |
 |---|---|---:|---|---|
