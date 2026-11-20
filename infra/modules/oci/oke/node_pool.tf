@@ -8,10 +8,13 @@ data "oci_containerengine_node_pool_option" "oke_options" {
 }
 
 locals {
-  # Filtra imagens Oracle Linux 8 ARM64 (aarch64) padrão, excluindo imagens de GPU
+  # Remove o prefixo 'v' (ex: v1.36.4 -> 1.36.4) para casar exatamente com o nome da imagem OKE
+  k8s_clean_version = trimprefix(var.kubernetes_version, "v")
+
+  # Seleciona a imagem Oracle Linux 8.10 ARM64 (aarch64) compatível com a versão do cluster
   arm64_images = [
     for s in data.oci_containerengine_node_pool_option.oke_options.sources : s.image_id
-    if length(regexall("Oracle-Linux-8\\.[0-9]+-aarch64-20", s.source_name)) > 0 && length(regexall("GPU", s.source_name)) == 0
+    if length(regexall("Oracle-Linux-8\\.10-aarch64-.*-OKE-${local.k8s_clean_version}-", s.source_name)) > 0
   ]
 }
 
