@@ -89,15 +89,16 @@ O pipeline configura:
 - Segurança: gosec para Go, Bandit para Python e Trivy para vulnerabilidades/secrets em arquivos e imagens, bloqueando achados CRITICAL.
 - Container: build da imagem para `linux/arm64` e scan com Trivy.
 
-O build de container não publica imagens nem realiza deploy. Não há workflows de Terraform, Kubernetes ou GitOps neste repositório. Atualmente não há arquivos de teste dos serviços; o pipeline executa os comandos de teste, mas isso não significa que existam testes funcionais implementados.
+O build de container não publica imagens nem realiza deploy. Ainda não há manifestos Kubernetes ou configuração GitOps neste repositório, mas a camada de infraestrutura como código (Terraform + GitHub Actions) já está ativa. Atualmente não há arquivos de teste dos serviços; o pipeline executa os comandos de teste, mas isso não significa que existam testes funcionais implementados.
 
 ## Infraestrutura como Código (IaC) e Automação OCI
 
 A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) está organizada de forma modular em `infra/`:
 
 - `infra/scripts/oci-state-preflight.sh`: script idempotente executado antes do `terraform init` para validar ou criar o bucket privado e versionado de estado remoto (`solidarytech-tfstate-prod`) no Object Storage.
-- `infra/modules/oci/network/`: módulo de rede contendo VCN (`10.0.0.0/16`), Internet Gateway, NAT Gateway, Service Gateway, tabelas de roteamento, Security Lists e sub-redes isoladas (`public-lb`, `private-oke` e `private-db`).
-- `infra/environments/oci-prod/`: composição do ambiente principal utilizando o backend nativo `backend "oci"` (Terraform `1.12.0+`).
+- `infra/modules/oci/network/`: módulo de rede contendo VCN (`10.0.0.0/16`), Internet Gateway, NAT Gateway, Service Gateway, tabelas de roteamento, Security Lists (incluindo regras de registro de workers OKE em `TCP/6443`, `TCP/12250` e `ICMP 3/4`) e sub-redes isoladas (`public-lb`, `private-oke` e `private-db`).
+- `infra/modules/oci/oke/`: módulo de computação e registro de imagens contendo cluster OKE (`BASIC_CLUSTER`, Kubernetes `v1.36.4`), Node Pool ARM64 (`VM.Standard.A2.Flex` com seleção dinâmica de imagem Oracle Linux 8.10 `aarch64` e restrição configurável de Fault Domain) e repositórios privados no OCI Container Registry (`solidarytech/ngo-service`, `solidarytech/donation-service`, `solidarytech/volunteer-service`).
+- `infra/environments/oci-prod/`: composição do ambiente principal (`main.tf`, `iam.tf`, `variables.tf`, `outputs.tf`, `versions.tf`) utilizando o backend nativo `backend "oci"` (Terraform `1.12.0+`).
 - `.github/workflows/infra-oci-lifecycle.yml` e `.github/workflows/_reusable-terraform.yml`: pipeline manual (`workflow_dispatch`) com controle de concorrência (`terraform-oci-prod`) para executar `preflight-only`, `plan`, `apply` e `destroy`, gerando sumário detalhado em `$GITHUB_STEP_SUMMARY`.
 
 ## Estado do projeto
@@ -109,14 +110,14 @@ A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) est�
 - Scripts SQL iniciais para os bancos PostgreSQL dos serviços de ONGs e doações.
 - Pipeline de CI e DevSecOps (`ci-apps.yml` e `_reusable-ci-devsecops.yml`) com detecção seletiva de alterações (`Scope Discovery`), linters, análise estática de segurança (gosec, Bandit, Trivy) e scan de imagens.
 - Preflight automatizado de estado remoto (`infra/scripts/oci-state-preflight.sh`) com bucket `solidarytech-tfstate-prod` validado na OCI.
-- Módulo de rede OCI (`infra/modules/oci/network`) e composição `infra/environments/oci-prod` validados via `terraform apply` no GitHub Actions.
+- Módulos OCI de rede (`infra/modules/oci/network`) e Kubernetes/Registry (`infra/modules/oci/oke`), política IAM de serviço (`iam.tf`) e composição `infra/environments/oci-prod` validados via `terraform apply` e `terraform destroy` no GitHub Actions.
 - Workflows de ciclo de vida da infraestrutura OCI (`infra-oci-lifecycle.yml` e `_reusable-terraform.yml`) com sumário de execução.
 - Regras de governança de engenharia em [`AGENTS.md`](./AGENTS.md).
 
 ### Planejado, ainda não implementado aqui
 
-- Módulos Terraform restantes da OCI (`infra/modules/oci/oke` para cluster Kubernetes ARM64 + OCIR, e `infra/modules/oci/postgres` para banco relacional gerenciado).
-- Módulos Terraform e ambiente AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby (aguardando liberação de acesso ao ambiente AWS).
+- Módulo Terraform restante da OCI (`infra/modules/oci/postgres` para banco relacional gerenciado).
+- Módulos Terraform e ambiente AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby.
 - Manifestos Kubernetes, Helm/Kustomize e entrega contínua via ArgoCD (GitOps).
 - Docker Compose e configuração de ambiente de desenvolvimento local reproduzível.
 - Testes automatizados funcionais dos microsserviços.

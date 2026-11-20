@@ -113,7 +113,7 @@ Do not interpret silence, implied intent, or general task authorization as appro
 ## 5. CLOUD ARCHITECTURE AND MULTICLOUD STRATEGY
 
 Approved Architectural Baseline (ACP-001 Rev. 2):
-- Primary provider: Oracle Cloud Infrastructure (OCI), region `sa-saopaulo-1`, hosting networking (VCN), compute (OKE with ARM64 `VM.Standard.A1.Flex` worker nodes), and managed relational persistence (OCI Database with PostgreSQL).
+- Primary provider: Oracle Cloud Infrastructure (OCI), region `sa-saopaulo-1`, hosting networking (VCN), compute (OKE with ARM64 `VM.Standard.A2.Flex` worker nodes and configurable Fault Domain placement due to `A1.Flex` regional capacity constraints), and managed relational persistence (OCI Database with PostgreSQL).
 - Secondary / Hybrid & DR provider: Amazon Web Services (AWS), hosting managed messaging (SQS with DLQ) and NoSQL persistence (DynamoDB) to preserve the original application codebase without refactoring, plus modularized Warm Standby infrastructure (`enable_warm_standby`) for Disaster Recovery.
 - Ephemeral Infrastructure Strategy (FinOps): Primary OCI resources are provisioned on demand via GitHub Actions (`terraform apply`) and destroyed during idle periods (`terraform destroy`) using a persistent remote state backend.
 
