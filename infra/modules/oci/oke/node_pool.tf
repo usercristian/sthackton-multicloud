@@ -8,10 +8,10 @@ data "oci_containerengine_node_pool_option" "oke_options" {
 }
 
 locals {
-  # Seleciona automaticamente a imagem Oracle Linux 8 ARM64 (aarch64) compatível com a versão do OKE
+  # Filtra imagens Oracle Linux 8 ARM64 (aarch64) padrão, excluindo imagens de GPU
   arm64_images = [
     for s in data.oci_containerengine_node_pool_option.oke_options.sources : s.image_id
-    if length(regexall("Oracle-Linux-8.*aarch64", s.source_name)) > 0
+    if length(regexall("Oracle-Linux-8\\.[0-9]+-aarch64-20", s.source_name)) > 0 && length(regexall("GPU", s.source_name)) == 0
   ]
 }
 
