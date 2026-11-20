@@ -21,7 +21,7 @@ variable "private_oke_subnet_id" {
 variable "kubernetes_version" {
   description = "Versão do Kubernetes suportada pelo OKE na região"
   type        = string
-  default     = "v1.31.1"
+  default     = "v1.37.1"
 }
 
 variable "node_shape" {
