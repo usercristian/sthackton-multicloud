@@ -25,9 +25,15 @@ variable "kubernetes_version" {
 }
 
 variable "node_shape" {
-  description = "Shape ARM64 dos Worker Nodes"
+  description = "Shape ARM64 dos Worker Nodes (ex: VM.Standard.A2.Flex ou VM.Standard.A1.Flex)"
   type        = string
-  default     = "VM.Standard.A1.Flex"
+  default     = "VM.Standard.A2.Flex"
+}
+
+variable "fault_domains" {
+  description = "Lista opcional de Fault Domains para restringir o posicionamento dos nós (vazio usa todos os FDs)"
+  type        = list(string)
+  default     = []
 }
 
 variable "node_ocpus" {

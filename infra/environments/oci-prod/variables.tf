@@ -28,3 +28,21 @@ variable "region" {
   type        = string
   default     = "sa-saopaulo-1"
 }
+
+variable "oke_node_shape" {
+  description = "Shape ARM64 dos Worker Nodes do OKE"
+  type        = string
+  default     = "VM.Standard.A2.Flex"
+}
+
+variable "oke_node_count" {
+  description = "Quantidade de Worker Nodes no Node Pool"
+  type        = number
+  default     = 1
+}
+
+variable "oke_fault_domains" {
+  description = "Fault Domains permitidos para alocação dos Worker Nodes"
+  type        = list(string)
+  default     = ["FAULT-DOMAIN-1"]
+}

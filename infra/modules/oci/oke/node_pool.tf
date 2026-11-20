@@ -44,6 +44,7 @@ resource "oci_containerengine_node_pool" "arm64_pool" {
       content {
         availability_domain = placement_configs.value.name
         subnet_id           = var.private_oke_subnet_id
+        fault_domains       = length(var.fault_domains) > 0 ? var.fault_domains : null
       }
     }
 

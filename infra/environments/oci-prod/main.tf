@@ -21,5 +21,8 @@ module "oke" {
   vcn_id                = module.network.vcn_id
   public_lb_subnet_id   = module.network.public_lb_subnet_id
   private_oke_subnet_id = module.network.private_oke_subnet_id
+  node_shape            = var.oke_node_shape
+  node_count            = var.oke_node_count
+  fault_domains         = var.oke_fault_domains
   tags                  = local.finops_tags
 }
