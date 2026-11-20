@@ -64,6 +64,33 @@ resource "oci_core_security_list" "public_lb" {
     }
   }
 
+  ingress_security_rules {
+    protocol = "6"
+    source   = var.private_oke_subnet_cidr
+    tcp_options {
+      min = 6443
+      max = 6443
+    }
+  }
+
+  ingress_security_rules {
+    protocol = "6"
+    source   = var.private_oke_subnet_cidr
+    tcp_options {
+      min = 12250
+      max = 12250
+    }
+  }
+
+  ingress_security_rules {
+    protocol = "1"
+    source   = var.private_oke_subnet_cidr
+    icmp_options {
+      type = 3
+      code = 4
+    }
+  }
+
   freeform_tags = var.tags
 }
 
