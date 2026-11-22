@@ -32,3 +32,18 @@ output "ocir_repositories" {
   description = "Repositórios OCIR criados para os microsserviços"
   value       = module.oke.ocir_repositories
 }
+
+output "postgres_db_system_id" {
+  description = "OCID do sistema PostgreSQL"
+  value       = module.postgres.db_system_id
+}
+
+output "postgres_private_ip" {
+  description = "Endereço IP privado do endpoint PostgreSQL"
+  value       = module.postgres.private_endpoint_ip
+}
+
+output "postgres_admin_username" {
+  description = "Nome do usuário administrador PostgreSQL"
+  value       = module.postgres.admin_username
+}

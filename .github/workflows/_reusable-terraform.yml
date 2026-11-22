@@ -72,6 +72,12 @@ jobs:
           chmod +x infra/scripts/oci-state-preflight.sh
           ./infra/scripts/oci-state-preflight.sh
 
+      - name: Preflight & Bootstrap de Secrets (OCI Vault)
+        id: secrets_preflight
+        run: |
+          chmod +x infra/scripts/oci-secrets-preflight.sh
+          ./infra/scripts/oci-secrets-preflight.sh
+
       - name: Setup Terraform (1.12.0+ para backend nativo OCI)
         if: inputs.action != 'preflight-only'
         uses: hashicorp/setup-terraform@v3
@@ -111,6 +117,7 @@ jobs:
           export OCI_USER_OCID="$OCI_CLI_USER"
           export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
           export OCI_REGION="$OCI_CLI_REGION"
+          export TF_VAR_db_secret_id="${{ steps.secrets_preflight.outputs.secret_id }}"
 
           terraform validate
           terraform plan -input=false -out=tfplan
@@ -126,6 +133,7 @@ jobs:
           export OCI_USER_OCID="$OCI_CLI_USER"
           export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
           export OCI_REGION="$OCI_CLI_REGION"
+          export TF_VAR_db_secret_id="${{ steps.secrets_preflight.outputs.secret_id }}"
 
           terraform apply -input=false -auto-approve tfplan
           echo "### Outputs Provisionados" >> /tmp/tf_outputs.md
@@ -144,6 +152,7 @@ jobs:
           export OCI_USER_OCID="$OCI_CLI_USER"
           export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
           export OCI_REGION="$OCI_CLI_REGION"
+          export TF_VAR_db_secret_id="${{ steps.secrets_preflight.outputs.secret_id }}"
 
           terraform destroy -input=false -auto-approve
 
@@ -156,6 +165,7 @@ jobs:
             echo "| Etapa | Status |"
             echo "|---|---|"
             echo "| Preflight & State Bucket | \`${{ steps.preflight.outcome }}\` |"
+            echo "| Preflight & OCI Vault Secrets | \`${{ steps.secrets_preflight.outcome }}\` |"
             echo "| Terraform Init | \`${{ steps.init.outcome }}\` |"
             echo "| Terraform Validate & Plan | \`${{ steps.plan.outcome }}\` |"
             echo "| Terraform Apply | \`${{ steps.apply.outcome }}\` |"
@@ -163,6 +173,7 @@ jobs:
             echo ""
             echo "- **Diretório:** \`${{ inputs.working_directory }}\`"
             echo "- **Bucket State:** \`${{ steps.preflight.outputs.bucket }}\` (Namespace: \`${{ steps.preflight.outputs.namespace }}\`)"
+            echo "- **Vault Secret ID:** \`${{ steps.secrets_preflight.outputs.secret_id }}\`"
             echo "- **Arquivo State:** \`${{ inputs.state_key }}\`"
             echo ""
             if [[ -f /tmp/tf_outputs.md ]]; then

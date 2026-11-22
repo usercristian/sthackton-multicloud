@@ -26,3 +26,12 @@ module "oke" {
   fault_domains         = var.oke_fault_domains
   tags                  = local.finops_tags
 }
+
+module "postgres" {
+  source = "../../modules/oci/postgres"
+
+  compartment_ocid     = var.compartment_ocid
+  private_db_subnet_id = module.network.private_db_subnet_id
+  db_secret_id         = var.db_secret_id
+  tags                 = local.finops_tags
+}

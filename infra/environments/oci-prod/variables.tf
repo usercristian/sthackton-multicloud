@@ -23,6 +23,11 @@ variable "compartment_ocid" {
   type        = string
 }
 
+variable "db_secret_id" {
+  description = "OCID do secret no OCI Vault que contém a senha administrativa PostgreSQL"
+  type        = string
+}
+
 variable "region" {
   description = "Região principal da OCI"
   type        = string
