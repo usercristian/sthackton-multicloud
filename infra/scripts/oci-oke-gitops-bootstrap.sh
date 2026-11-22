@@ -125,6 +125,7 @@ oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster create-kubeconfig \
   --overwrite \
   --token-version 2.0.0 \
   --kube-endpoint PUBLIC_ENDPOINT
+chmod 600 "${HOME}/.kube/config"
 
 API_READY=0
 for attempt in {1..36}; do
@@ -168,6 +169,7 @@ helm upgrade --install argocd argo/argo-cd \
   --namespace argocd \
   --create-namespace \
   --set 'configs.params.server\.insecure=true' \
+  --set-string 'configs.cm.kustomize\.buildOptions=--load-restrictor LoadRestrictionsNone' \
   --set dex.enabled=false \
   --set notifications.enabled=false \
   --set applicationSet.enabled=false \

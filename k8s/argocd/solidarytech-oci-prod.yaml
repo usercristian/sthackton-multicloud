@@ -9,8 +9,6 @@ spec:
     repoURL: https://github.com/usercristian/togglemaster-multicloud.git
     targetRevision: master
     path: k8s/overlays/oci-prod
-    kustomize:
-      buildOptions: "--load-restrictor LoadRestrictionsNone"
   destination:
     server: https://kubernetes.default.svc
     namespace: solidarytech
