@@ -51,3 +51,9 @@ variable "oke_fault_domains" {
   type        = list(string)
   default     = ["FAULT-DOMAIN-1"]
 }
+
+variable "oke_admin_allowed_cidrs" {
+  description = "CIDRs externos autorizados a acessar a API pública do OKE pela porta TCP/6443"
+  type        = list(string)
+  default     = ["200.150.252.181/32"]
+}

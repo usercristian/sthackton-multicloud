@@ -10,8 +10,9 @@ locals {
 module "network" {
   source = "../../modules/oci/network"
 
-  compartment_ocid = var.compartment_ocid
-  tags             = local.finops_tags
+  compartment_ocid    = var.compartment_ocid
+  admin_allowed_cidrs = var.oke_admin_allowed_cidrs
+  tags                = local.finops_tags
 }
 
 module "oke" {

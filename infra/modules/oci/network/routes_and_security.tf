@@ -73,6 +73,20 @@ resource "oci_core_security_list" "public_lb" {
     }
   }
 
+  dynamic "ingress_security_rules" {
+    for_each = var.admin_allowed_cidrs
+    content {
+      protocol  = "6"
+      source    = ingress_security_rules.value
+      stateless = false
+
+      tcp_options {
+        min = 6443
+        max = 6443
+      }
+    }
+  }
+
   ingress_security_rules {
     protocol = "6"
     source   = var.private_oke_subnet_cidr

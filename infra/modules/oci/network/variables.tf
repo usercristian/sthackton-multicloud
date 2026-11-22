@@ -27,6 +27,12 @@ variable "private_db_subnet_cidr" {
   default     = "10.0.3.0/24"
 }
 
+variable "admin_allowed_cidrs" {
+  description = "Lista de CIDRs externos autorizados a acessar a API do Kubernetes (TCP/6443)"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Mapa de tags FinOps obrigatórias"
   type        = map(string)
