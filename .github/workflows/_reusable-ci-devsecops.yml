@@ -253,7 +253,7 @@ jobs:
           VAULT_ID=$(jq -r '.[0].id' <<<"${MATCHING_VAULTS}")
 
           OCIR_SECRET_CONTENT_BASE64=$(oci --config-file "${OCI_CONFIG_FILE}" --auth api_key \
-            vault secret-bundle get-secret-bundle-by-name \
+            secrets secret-bundle get-secret-bundle-by-name \
             --vault-id "${VAULT_ID}" \
             --secret-name "solidarytech-ocir-token" \
             --stage CURRENT \
