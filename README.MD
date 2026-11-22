@@ -96,10 +96,12 @@ O build de container não publica imagens nem realiza deploy. Ainda não há man
 A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) está organizada de forma modular em `infra/`:
 
 - `infra/scripts/oci-state-preflight.sh`: script idempotente executado antes do `terraform init` para validar ou criar o bucket privado e versionado de estado remoto (`solidarytech-tfstate-prod`) no Object Storage.
+- `infra/scripts/oci-secrets-preflight.sh`: bootstrap idempotente e persistente do OCI Vault `solidarytech-vault-prod`, da Master Key AES-256/SOFTWARE e do segredo da senha do banco; esses recursos ficam fora do ciclo de `terraform destroy`.
 - `infra/modules/oci/network/`: módulo de rede contendo VCN (`10.0.0.0/16`), Internet Gateway, NAT Gateway, Service Gateway, tabelas de roteamento, Security Lists (incluindo regras de registro de workers OKE em `TCP/6443`, `TCP/12250` e `ICMP 3/4`) e sub-redes isoladas (`public-lb`, `private-oke` e `private-db`).
 - `infra/modules/oci/oke/`: módulo de computação e registro de imagens contendo cluster OKE (`BASIC_CLUSTER`, Kubernetes `v1.36.4`), Node Pool ARM64 (`VM.Standard.A2.Flex` com seleção dinâmica de imagem Oracle Linux 8.10 `aarch64` e restrição configurável de Fault Domain) e repositórios privados no OCI Container Registry (`solidarytech/ngo-service`, `solidarytech/donation-service`, `solidarytech/volunteer-service`).
+- `infra/modules/oci/postgres/`: módulo do OCI Database with PostgreSQL, com padrão `PostgreSQL.VM.Standard.E5.Flex` na sub-rede privada `10.0.3.0/24`, credencial `VAULT_SECRET` e acesso ao banco restrito à sub-rede do OKE (`10.0.2.0/24`) em `TCP/5432`.
 - `infra/environments/oci-prod/`: composição do ambiente principal (`main.tf`, `iam.tf`, `variables.tf`, `outputs.tf`, `versions.tf`) utilizando o backend nativo `backend "oci"` (Terraform `1.12.0+`).
-- `.github/workflows/infra-oci-lifecycle.yml` e `.github/workflows/_reusable-terraform.yml`: pipeline manual (`workflow_dispatch`) com controle de concorrência (`terraform-oci-prod`) para executar `preflight-only`, `plan`, `apply` e `destroy`, gerando sumário detalhado em `$GITHUB_STEP_SUMMARY`.
+- `.github/workflows/infra-oci-lifecycle.yml` e `.github/workflows/_reusable-terraform.yml`: pipeline manual (`workflow_dispatch`) com controle de concorrência (`terraform-oci-prod`) para executar `preflight-only`, `plan`, `apply` e `destroy`; o workflow reutilizável executa o preflight de secrets, injeta automaticamente `TF_VAR_db_secret_id` e gera sumário detalhado em `$GITHUB_STEP_SUMMARY`.
 
 ## Estado do projeto
 
@@ -110,13 +112,14 @@ A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) est�
 - Scripts SQL iniciais para os bancos PostgreSQL dos serviços de ONGs e doações.
 - Pipeline de CI e DevSecOps (`ci-apps.yml` e `_reusable-ci-devsecops.yml`) com detecção seletiva de alterações (`Scope Discovery`), linters, análise estática de segurança (gosec, Bandit, Trivy) e scan de imagens.
 - Preflight automatizado de estado remoto (`infra/scripts/oci-state-preflight.sh`) com bucket `solidarytech-tfstate-prod` validado na OCI.
+- Bootstrap idempotente e persistente do OCI Vault, Master Key e segredo de senha PostgreSQL (`infra/scripts/oci-secrets-preflight.sh`).
 - Módulos OCI de rede (`infra/modules/oci/network`) e Kubernetes/Registry (`infra/modules/oci/oke`), política IAM de serviço (`iam.tf`) e composição `infra/environments/oci-prod` validados via `terraform apply` e `terraform destroy` no GitHub Actions.
+- Módulo PostgreSQL gerenciado (`infra/modules/oci/postgres`); conectividade privada entre OKE ARM64 (`10.0.2.0/24`) e PostgreSQL (`10.0.3.0/24:5432`) validada.
 - Workflows de ciclo de vida da infraestrutura OCI (`infra-oci-lifecycle.yml` e `_reusable-terraform.yml`) com sumário de execução.
 - Regras de governança de engenharia em [`AGENTS.md`](./AGENTS.md).
 
 ### Planejado, ainda não implementado aqui
 
-- Módulo Terraform restante da OCI (`infra/modules/oci/postgres` para banco relacional gerenciado).
 - Módulos Terraform e ambiente AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby.
 - Manifestos Kubernetes, Helm/Kustomize e entrega contínua via ArgoCD (GitOps).
 - Docker Compose e configuração de ambiente de desenvolvimento local reproduzível.
