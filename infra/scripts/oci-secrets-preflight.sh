@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set +x
 
 : "${OCI_CLI_COMPARTMENT:?Variável OCI_CLI_COMPARTMENT não definida}"
 : "${OCI_CLI_USER:?Variável OCI_CLI_USER não definida}"
@@ -9,10 +10,11 @@ VAULT_NAME="solidarytech-vault-prod"
 KEY_NAME="solidarytech-master-key"
 SECRET_NAME="solidarytech-postgres-password"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
+ARGOCD_ADMIN_SECRET_NAME="solidarytech-argocd-admin-password"
 FINOPS_TAGS='{"Project":"Solidary Tech","Environment":"Production","CostCenter":"NGO-Core","ManagedBy":"CI-Preflight"}'
-trap 'unset GENERATED_PASSWORD SECRET_CONTENT_BASE64 GENERATED_OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64' EXIT
+trap 'unset GENERATED_PASSWORD SECRET_CONTENT_BASE64 GENERATED_OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64 GENERATED_ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_SECRET_CONTENT_BASE64' EXIT
 
-for command in oci jq openssl base64; do
+for command in oci jq openssl base64 tr cut; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "ERRO: Dependência obrigatória não encontrada: ${command}" >&2
     exit 1
@@ -244,6 +246,68 @@ for attempt in {1..120}; do
 done
 
 echo "Secret '${OCIR_SECRET_NAME}' ativo."
+
+ARGOCD_ADMIN_SECRETS=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret list \
+  --compartment-id "${OCI_CLI_COMPARTMENT}" \
+  --vault-id "${VAULT_ID}" \
+  --name "${ARGOCD_ADMIN_SECRET_NAME}" \
+  --all \
+  --query 'data')
+MATCHING_ARGOCD_ADMIN_SECRETS=$(jq -c --arg name "${ARGOCD_ADMIN_SECRET_NAME}" \
+  '[.[] | select(."secret-name" == $name)]' <<<"${ARGOCD_ADMIN_SECRETS}")
+ARGOCD_ADMIN_SECRET_COUNT=$(jq 'length' <<<"${MATCHING_ARGOCD_ADMIN_SECRETS}")
+
+if [[ "${ARGOCD_ADMIN_SECRET_COUNT}" -gt 1 ]]; then
+  echo "ERRO: Mais de um secret '${ARGOCD_ADMIN_SECRET_NAME}' foi encontrado no Vault." >&2
+  exit 1
+fi
+
+if [[ "${ARGOCD_ADMIN_SECRET_COUNT}" -eq 0 ]]; then
+  echo "Secret '${ARGOCD_ADMIN_SECRET_NAME}' não encontrado. Criando senha persistente..."
+  GENERATED_ARGOCD_ADMIN_PASSWORD=$(openssl rand -base64 48 \
+    | tr -dc 'A-Za-z0-9' \
+    | cut -c1-20)
+  if [[ "${#GENERATED_ARGOCD_ADMIN_PASSWORD}" -ne 20 ]]; then
+    echo "ERRO: Não foi possível gerar uma senha alfanumérica de 20 caracteres." >&2
+    exit 1
+  fi
+
+  ARGOCD_ADMIN_SECRET_CONTENT_BASE64=$(printf '%s' "${GENERATED_ARGOCD_ADMIN_PASSWORD}" | base64 -w 0)
+  ARGOCD_ADMIN_SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret create-base64 \
+    --compartment-id "${OCI_CLI_COMPARTMENT}" \
+    --vault-id "${VAULT_ID}" \
+    --key-id "${KEY_ID}" \
+    --secret-name "${ARGOCD_ADMIN_SECRET_NAME}" \
+    --secret-content-content "${ARGOCD_ADMIN_SECRET_CONTENT_BASE64}" \
+    --secret-content-name initial \
+    --secret-content-stage CURRENT \
+    --freeform-tags "${FINOPS_TAGS}" \
+    --query 'data')
+  ARGOCD_ADMIN_SECRET_ID=$(jq -r '.id' <<<"${ARGOCD_ADMIN_SECRET_JSON}")
+  unset GENERATED_ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_SECRET_CONTENT_BASE64
+else
+  ARGOCD_ADMIN_SECRET_ID=$(jq -r '.[0].id' <<<"${MATCHING_ARGOCD_ADMIN_SECRETS}")
+fi
+
+ARGOCD_ADMIN_SECRET_STATE=""
+for attempt in {1..120}; do
+  ARGOCD_ADMIN_SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret get \
+    --secret-id "${ARGOCD_ADMIN_SECRET_ID}" \
+    --query 'data')
+  ARGOCD_ADMIN_SECRET_STATE=$(jq -r '."lifecycle-state"' <<<"${ARGOCD_ADMIN_SECRET_JSON}")
+  if [[ "${ARGOCD_ADMIN_SECRET_STATE}" == "ACTIVE" ]]; then
+    break
+  fi
+  if [[ "${ARGOCD_ADMIN_SECRET_STATE}" == "FAILED" ||
+    "${ARGOCD_ADMIN_SECRET_STATE}" == "DELETED" ||
+    "${attempt}" -eq 120 ]]; then
+    echo "ERRO: Secret '${ARGOCD_ADMIN_SECRET_NAME}' não atingiu ACTIVE (estado: ${ARGOCD_ADMIN_SECRET_STATE})." >&2
+    exit 1
+  fi
+  sleep 10
+done
+
+echo "Secret '${ARGOCD_ADMIN_SECRET_NAME}' ativo; valor preservado."
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {

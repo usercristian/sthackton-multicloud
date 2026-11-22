@@ -12,6 +12,7 @@ set +x
 VAULT_NAME="solidarytech-vault-prod"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
 DB_SECRET_NAME="solidarytech-postgres-password"
+ARGOCD_ADMIN_PASSWORD_SECRET_NAME="solidarytech-argocd-admin-password"
 REGISTRY="sa-saopaulo-1.ocir.io"
 POSTGRES_USER="${POSTGRES_ADMIN_USERNAME}"
 POSTGRES_PORT="5432"
@@ -19,6 +20,12 @@ POSTGRES_PORT="5432"
 cleanup() {
   unset OCIR_TOKEN DB_PASSWORD
   unset DB_PASSWORD_URLENCODED NGO_DATABASE_URL DONATION_DATABASE_URL
+  unset ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_PASSWORD_HASH
+  unset EXISTING_ADMIN_PASSWORD_HASH EXISTING_ADMIN_PASSWORD_HASH_BASE64
+  unset ARGOCD_SECRET_JSON
+  if [[ -n "${ARGOCD_SECRET_PATCH_FILE:-}" ]]; then
+    rm -f -- "${ARGOCD_SECRET_PATCH_FILE}"
+  fi
 }
 trap cleanup EXIT
 
@@ -169,6 +176,7 @@ helm upgrade --install argocd argo/argo-cd \
   --namespace argocd \
   --create-namespace \
   --set 'configs.params.server\.insecure=true' \
+  --set-string 'configs.params.server\.rootpath=/argocd' \
   --set-string 'configs.cm.kustomize\.buildOptions=--load-restrictor LoadRestrictionsNone' \
   --set dex.enabled=false \
   --set notifications.enabled=false \
@@ -217,6 +225,116 @@ kubectl rollout status deployment/argocd-server --namespace argocd --timeout=10m
 kubectl rollout status deployment/argocd-repo-server --namespace argocd --timeout=10m
 kubectl rollout status statefulset/argocd-application-controller --namespace argocd --timeout=10m
 kubectl rollout status deployment/argocd-redis --namespace argocd --timeout=10m
+
+ARGOCD_ADMIN_PASSWORD=$(get_secret_value "${ARGOCD_ADMIN_PASSWORD_SECRET_NAME}")
+if [[ -z "${ARGOCD_ADMIN_PASSWORD}" ]]; then
+  echo "ERRO: A senha administrativa do ArgoCD retornada pelo Vault está vazia." >&2
+  exit 1
+fi
+
+if ! python3 -c 'import bcrypt' >/dev/null 2>&1; then
+  python3 -m pip install --quiet --disable-pip-version-check bcrypt
+fi
+
+ARGOCD_SECRET_JSON=$(kubectl -n argocd get secret argocd-secret -o json)
+EXISTING_ADMIN_PASSWORD_HASH_BASE64=$(jq -r '.data["admin.password"] // empty' \
+  <<<"${ARGOCD_SECRET_JSON}")
+EXISTING_ADMIN_PASSWORD_HASH=""
+if [[ -n "${EXISTING_ADMIN_PASSWORD_HASH_BASE64}" ]]; then
+  EXISTING_ADMIN_PASSWORD_HASH=$(printf '%s' "${EXISTING_ADMIN_PASSWORD_HASH_BASE64}" \
+    | base64 --decode)
+fi
+EXISTING_ADMIN_PASSWORD_MTIME=$(jq -r '.data["admin.passwordMtime"] // empty' \
+  <<<"${ARGOCD_SECRET_JSON}")
+
+PASSWORD_HASH_MATCH="false"
+if [[ -n "${EXISTING_ADMIN_PASSWORD_HASH}" ]]; then
+  PASSWORD_HASH_MATCH=$( \
+    ARGOCD_ADMIN_PASSWORD="${ARGOCD_ADMIN_PASSWORD}" \
+    EXISTING_ADMIN_PASSWORD_HASH="${EXISTING_ADMIN_PASSWORD_HASH}" \
+    python3 - <<'PY'
+import os
+import bcrypt
+
+try:
+    matches = bcrypt.checkpw(
+        os.environ["ARGOCD_ADMIN_PASSWORD"].encode(),
+        os.environ["EXISTING_ADMIN_PASSWORD_HASH"].encode(),
+    )
+except (TypeError, ValueError):
+    matches = False
+print("true" if matches else "false")
+PY
+  )
+fi
+
+if [[ "${PASSWORD_HASH_MATCH}" != "true" || -z "${EXISTING_ADMIN_PASSWORD_MTIME}" ]]; then
+  if [[ "${PASSWORD_HASH_MATCH}" == "true" ]]; then
+    ARGOCD_ADMIN_PASSWORD_HASH="${EXISTING_ADMIN_PASSWORD_HASH}"
+  else
+    ARGOCD_ADMIN_PASSWORD_HASH=$( \
+      ARGOCD_ADMIN_PASSWORD="${ARGOCD_ADMIN_PASSWORD}" \
+      python3 -c 'import bcrypt, os; print(bcrypt.hashpw(os.environ["ARGOCD_ADMIN_PASSWORD"].encode(), bcrypt.gensalt()).decode("ascii"))'
+    )
+  fi
+  if [[ -z "${ARGOCD_ADMIN_PASSWORD_HASH}" ]]; then
+    echo "ERRO: Não foi possível gerar/verificar o hash administrativo do ArgoCD." >&2
+    exit 1
+  fi
+
+  ARGOCD_SECRET_PATCH_FILE=$(mktemp "${TMPDIR:-/tmp}/argocd-secret-patch.XXXXXX")
+  chmod 600 "${ARGOCD_SECRET_PATCH_FILE}"
+  ARGOCD_ADMIN_PASSWORD_HASH="${ARGOCD_ADMIN_PASSWORD_HASH}" \
+    ADMIN_PASSWORD_MTIME="$(date -u +%FT%TZ)" \
+    python3 - "${ARGOCD_SECRET_PATCH_FILE}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+patch = {
+    "stringData": {
+        "admin.password": os.environ["ARGOCD_ADMIN_PASSWORD_HASH"],
+        "admin.passwordMtime": os.environ["ADMIN_PASSWORD_MTIME"],
+    }
+}
+Path(sys.argv[1]).write_text(json.dumps(patch))
+PY
+  kubectl -n argocd patch secret argocd-secret \
+    --type=merge \
+    --patch-file "${ARGOCD_SECRET_PATCH_FILE}" \
+    >/dev/null
+else
+  echo "Senha administrativa do ArgoCD já sincronizada; hash preservado."
+fi
+
+kubectl -n argocd delete secret argocd-initial-admin-secret \
+  --ignore-not-found \
+  >/dev/null
+unset ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_PASSWORD_HASH
+unset EXISTING_ADMIN_PASSWORD_HASH EXISTING_ADMIN_PASSWORD_HASH_BASE64
+unset ARGOCD_SECRET_JSON
+
+kubectl apply -f - >/dev/null <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /argocd
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+YAML
+
 kubectl apply -f k8s/argocd/solidarytech-oci-prod.yaml
 
 echo "Bootstrap GitOps concluído."

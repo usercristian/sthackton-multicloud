@@ -134,6 +134,11 @@ jobs:
           } >> "${GITHUB_ENV}"
           echo "Outputs oficiais do OKE e PostgreSQL carregados do Terraform State."
 
+      - name: Garantir senha persistente do ArgoCD no OCI Vault
+        id: vault-preflight
+        run: |
+          chmod +x infra/scripts/oci-secrets-preflight.sh && ./infra/scripts/oci-secrets-preflight.sh
+
       - name: Liberar temporariamente IP do Runner na Security List (TCP/6443)
         run: |
           set -euo pipefail
@@ -347,8 +352,10 @@ jobs:
         env:
           BOOTSTRAP_STATUS: ${{ steps.bootstrap.outcome }}
           TERRAFORM_STATUS: ${{ steps.terraform-outputs.outcome }}
+          VAULT_ID: ${{ steps.vault-preflight.outputs.vault_id }}
         run: |
           set -u
+          set +x
 
           CLUSTER_STATUS="Não consultado"
           if [[ -n "${OKE_CLUSTER_ID:-}" ]]; then
@@ -362,11 +369,15 @@ jobs:
           fi
 
           TRAEFIK_ENDPOINTS="Indisponível"
+          TRAEFIK_ENDPOINT=""
           ARGOCD_APPLICATION="Indisponível"
           if [[ -f "${HOME}/.kube/config" ]]; then
             if TRAEFIK_SERVICE=$(kubectl -n traefik get service traefik -o json); then
               TRAEFIK_ENDPOINTS=$(jq -r \
                 '[.status.loadBalancer.ingress[]? | (.ip // .hostname // empty)] | join(", ")' \
+                <<<"${TRAEFIK_SERVICE}")
+              TRAEFIK_ENDPOINT=$(jq -r \
+                '[.status.loadBalancer.ingress[]? | (.ip // .hostname // empty)][0] // empty' \
                 <<<"${TRAEFIK_SERVICE}")
               if [[ -z "${TRAEFIK_ENDPOINTS}" ]]; then
                 TRAEFIK_ENDPOINTS="Aguardando endereço do Load Balancer"
@@ -390,6 +401,36 @@ jobs:
             echo "| Cluster OKE | \`${CLUSTER_STATUS}\` |"
             echo "| Load Balancer Traefik | \`${TRAEFIK_ENDPOINTS}\` |"
             echo "| Application ArgoCD | \`${ARGOCD_APPLICATION}\` |"
+            echo ""
+            echo "## Acesso web e validação"
+            if [[ -n "${TRAEFIK_ENDPOINT}" ]]; then
+              printf -- '- Painel ArgoCD: [http://%s/argocd](http://%s/argocd) (usuário: `admin`).\n' \
+                "${TRAEFIK_ENDPOINT}" "${TRAEFIK_ENDPOINT}"
+              echo ""
+              echo '```bash'
+              printf 'curl --fail "http://%s/ngos/health"\n' "${TRAEFIK_ENDPOINT}"
+              printf 'curl --fail "http://%s/donations/health"\n' "${TRAEFIK_ENDPOINT}"
+              printf 'curl --fail "http://%s/volunteers/health"\n' "${TRAEFIK_ENDPOINT}"
+              echo '```'
+            else
+              echo "O endereço do Load Balancer Traefik ainda não está disponível neste run."
+            fi
+            echo ""
+            echo 'A senha do usuário `admin` permanece no OCI Vault; ela não é incluída neste sumário.'
+            echo "Execute o comando abaixo em um terminal local confiável para recuperar a senha. A saída não é coletada pelo workflow:"
+            if [[ -n "${VAULT_ID:-}" ]]; then
+              echo ""
+              echo '```bash'
+              printf 'oci --auth api_key --region sa-saopaulo-1 secrets secret-bundle get-secret-bundle-by-name \\\n'
+              printf '  --vault-id "%s" \\\n' "${VAULT_ID}"
+              printf '  --secret-name solidarytech-argocd-admin-password \\\n'
+              printf '  --stage CURRENT \\\n'
+              printf '  --query '\''data."secret-bundle-content".content'\'' \\\n'
+              printf '  --raw-output | base64 --decode\n'
+              echo '```'
+            else
+              echo "OCID do Vault indisponível; consulte o estado do step de preflight."
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Revogar acesso temporario do Runner na Security List (TCP/6443)
