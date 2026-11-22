@@ -272,12 +272,11 @@ jobs:
 
           LOCAL_IMAGE="solidarytech/${SERVICE_NAME}:${GITHUB_SHA}"
           OCIR_IMAGE="sa-saopaulo-1.ocir.io/${TENANCY_NAMESPACE}/solidarytech/${SERVICE_NAME}"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:${SHORT_SHA}"
+          docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:${GITHUB_SHA}"
           docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:latest"
-          docker push "${OCIR_IMAGE}:${SHORT_SHA}"
+          docker push "${OCIR_IMAGE}:${GITHUB_SHA}"
           docker push "${OCIR_IMAGE}:latest"
-          echo "Imagem publicada: ${OCIR_IMAGE}:${SHORT_SHA} e :latest (linux/arm64)."
+          echo "Imagem publicada: ${OCIR_IMAGE}:${GITHUB_SHA} e :latest (linux/arm64)."
 
       - name: Limpar credenciais temporárias OCI e Docker
         if: always() && inputs.push_image

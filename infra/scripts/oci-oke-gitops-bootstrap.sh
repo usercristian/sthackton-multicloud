@@ -5,14 +5,15 @@ set +x
 : "${OCI_CLI_COMPARTMENT:?Variável OCI_CLI_COMPARTMENT não definida}"
 : "${OCI_CLI_USER:?Variável OCI_CLI_USER não definida}"
 : "${OCI_CLI_REGION:=sa-saopaulo-1}"
+: "${OKE_CLUSTER_ID:?Variável OKE_CLUSTER_ID não definida}"
+: "${POSTGRES_PRIVATE_IP:?Variável POSTGRES_PRIVATE_IP não definida}"
+: "${POSTGRES_ADMIN_USERNAME:?Variável POSTGRES_ADMIN_USERNAME não definida}"
 
 VAULT_NAME="solidarytech-vault-prod"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
 DB_SECRET_NAME="solidarytech-postgres-password"
-CLUSTER_NAME="solidarytech-oke-prod"
-DB_SYSTEM_NAME="solidarytech-postgres-prod"
 REGISTRY="sa-saopaulo-1.ocir.io"
-POSTGRES_USER="solidaryadmin"
+POSTGRES_USER="${POSTGRES_ADMIN_USERNAME}"
 POSTGRES_PORT="5432"
 
 cleanup() {
@@ -28,27 +29,28 @@ for command in oci jq base64 python3 helm kubectl; do
   fi
 done
 
-echo "Localizando cluster OKE, Vault e DB System..."
+if ! python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' \
+  "${POSTGRES_PRIVATE_IP}" >/dev/null 2>&1; then
+  echo "ERRO: POSTGRES_PRIVATE_IP não contém um endereço IP válido." >&2
+  exit 1
+fi
 
-CLUSTERS=$(oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster list \
-  --compartment-id "${OCI_CLI_COMPARTMENT}" \
-  --all \
+echo "Validando cluster OKE pelo ID informado..."
+CLUSTER=$(oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster get \
+  --cluster-id "${OKE_CLUSTER_ID}" \
   --query 'data')
-MATCHING_CLUSTERS=$(jq -c --arg name "${CLUSTER_NAME}" \
-  '[.[] | select(.name == $name)]' <<<"${CLUSTERS}")
-CLUSTER_COUNT=$(jq 'length' <<<"${MATCHING_CLUSTERS}")
-if [[ "${CLUSTER_COUNT}" -ne 1 ]]; then
-  echo "ERRO: Esperado exatamente um cluster '${CLUSTER_NAME}'; encontrados: ${CLUSTER_COUNT}." >&2
-  exit 1
-fi
-
-CLUSTER_ID=$(jq -r '.[0].id' <<<"${MATCHING_CLUSTERS}")
-CLUSTER_STATE=$(jq -r '.[0]."lifecycle-state"' <<<"${MATCHING_CLUSTERS}")
+CLUSTER_STATE=$(jq -r '."lifecycle-state"' <<<"${CLUSTER}")
+CLUSTER_COMPARTMENT=$(jq -r '."compartment-id"' <<<"${CLUSTER}")
 if [[ "${CLUSTER_STATE}" != "ACTIVE" ]]; then
-  echo "ERRO: Cluster '${CLUSTER_NAME}' não está ACTIVE (estado: ${CLUSTER_STATE})." >&2
+  echo "ERRO: Cluster OKE não está ACTIVE (estado: ${CLUSTER_STATE})." >&2
+  exit 1
+fi
+if [[ "${CLUSTER_COMPARTMENT}" != "${OCI_CLI_COMPARTMENT}" ]]; then
+  echo "ERRO: O cluster OKE pertence a um compartment diferente do configurado." >&2
   exit 1
 fi
 
+echo "Cluster OKE ativo e validado; carregando o Vault..."
 VAULTS=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms management vault list \
   --compartment-id "${OCI_CLI_COMPARTMENT}" \
   --all \
@@ -108,29 +110,7 @@ if [[ -z "${OCI_USERNAME}" || -z "${TENANCY_NAMESPACE}" ]]; then
   exit 1
 fi
 
-DB_SYSTEMS=$(oci --auth api_key --region "${OCI_CLI_REGION}" psql db-system list \
-  --compartment-id "${OCI_CLI_COMPARTMENT}" \
-  --all \
-  --query 'data')
-MATCHING_DB_SYSTEMS=$(jq -c --arg name "${DB_SYSTEM_NAME}" \
-  '[.[] | select(."display-name" == $name and ."lifecycle-state" == "ACTIVE")]' \
-  <<<"${DB_SYSTEMS}")
-DB_SYSTEM_COUNT=$(jq 'length' <<<"${MATCHING_DB_SYSTEMS}")
-if [[ "${DB_SYSTEM_COUNT}" -ne 1 ]]; then
-  echo "ERRO: Esperado exatamente um DB System ativo '${DB_SYSTEM_NAME}'; encontrados: ${DB_SYSTEM_COUNT}." >&2
-  exit 1
-fi
-
-DB_SYSTEM_ID=$(jq -r '.[0].id' <<<"${MATCHING_DB_SYSTEMS}")
-DB_SYSTEM=$(oci --auth api_key --region "${OCI_CLI_REGION}" psql db-system get \
-  --db-system-id "${DB_SYSTEM_ID}" \
-  --query 'data')
-DB_HOST=$(jq -r '."network-details"[0]."primary-db-endpoint-private-ip" // empty' \
-  <<<"${DB_SYSTEM}")
-if [[ -z "${DB_HOST}" || "${DB_HOST}" == "null" ]]; then
-  echo "ERRO: DB System '${DB_SYSTEM_NAME}' não retornou o IP privado do endpoint." >&2
-  exit 1
-fi
+DB_HOST="${POSTGRES_PRIVATE_IP}"
 
 DB_PASSWORD_URLENCODED=$(DB_PASSWORD="${DB_PASSWORD}" python3 -c \
   'import os; from urllib.parse import quote; print(quote(os.environ["DB_PASSWORD"], safe=""))')
@@ -140,11 +120,35 @@ DONATION_DATABASE_URL="postgresql://${POSTGRES_USER}:${DB_PASSWORD_URLENCODED}@$
 mkdir -p "${HOME}/.kube"
 chmod 700 "${HOME}/.kube"
 oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster create-kubeconfig \
-  --cluster-id "${CLUSTER_ID}" \
+  --cluster-id "${OKE_CLUSTER_ID}" \
   --file "${HOME}/.kube/config" \
   --overwrite \
   --token-version 2.0.0 \
   --kube-endpoint PUBLIC_ENDPOINT
+
+API_READY=0
+for attempt in {1..36}; do
+  if kubectl get --raw='/readyz' >/dev/null; then
+    API_READY=1
+    break
+  fi
+  echo "API Kubernetes ainda não está pronta (tentativa ${attempt}/36); aguardando 5s."
+  sleep 5
+done
+if [[ "${API_READY}" -ne 1 ]]; then
+  echo "ERRO: API Kubernetes não ficou pronta após 180 segundos." >&2
+  exit 1
+fi
+
+kubectl wait --for=condition=Ready nodes --all --timeout=180s
+NODES=$(kubectl get nodes -o json)
+NODE_COUNT=$(jq '.items | length' <<<"${NODES}")
+NON_ARM64_COUNT=$(jq '[.items[] | select(.status.nodeInfo.architecture != "arm64")] | length' \
+  <<<"${NODES}")
+if [[ "${NODE_COUNT}" -eq 0 || "${NON_ARM64_COUNT}" -ne 0 ]]; then
+  echo "ERRO: Esperados nós ARM64 Ready; encontrados ${NODE_COUNT} nós e ${NON_ARM64_COUNT} com arquitetura diferente." >&2
+  exit 1
+fi
 
 echo "Instalando ou atualizando Traefik e ArgoCD..."
 helm repo add traefik https://traefik.github.io/charts --force-update

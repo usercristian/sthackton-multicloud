@@ -68,15 +68,93 @@ jobs:
 
       - name: Preflight & Bootstrap do Backend (OCI Object Storage)
         id: preflight
+        if: github.event_name != 'pull_request'
         run: |
           chmod +x infra/scripts/oci-state-preflight.sh
           ./infra/scripts/oci-state-preflight.sh
 
       - name: Preflight & Bootstrap de Secrets (OCI Vault)
         id: secrets_preflight
+        if: github.event_name != 'pull_request'
         run: |
           chmod +x infra/scripts/oci-secrets-preflight.sh
           ./infra/scripts/oci-secrets-preflight.sh
+
+      - name: Validar backend existente sem alterações (PR)
+        id: preflight_pr
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+
+          NAMESPACE=$(oci --auth api_key --region "${OCI_CLI_REGION}" os ns get \
+            --query 'data' \
+            --raw-output)
+          if ! BUCKET=$(oci --auth api_key --region "${OCI_CLI_REGION}" os bucket get \
+            --namespace-name "${NAMESPACE}" \
+            --bucket-name "${TF_STATE_BUCKET}" \
+            --query 'data'); then
+            echo "ERRO: Backend '${TF_STATE_BUCKET}' não existe. Execute o workflow de infraestrutura manualmente antes do PR." >&2
+            exit 1
+          fi
+
+          BUCKET_COMPARTMENT=$(jq -r '."compartment-id"' <<<"${BUCKET}")
+          PUBLIC_ACCESS=$(jq -r '."public-access-type"' <<<"${BUCKET}")
+          VERSIONING=$(jq -r '.versioning' <<<"${BUCKET}")
+          if [[ "${BUCKET_COMPARTMENT}" != "${OCI_CLI_COMPARTMENT}" ||
+            "${PUBLIC_ACCESS}" != "NoPublicAccess" ||
+            "${VERSIONING}" != "Enabled" ]]; then
+            echo "ERRO: Backend existente não atende compartment, privacidade e versionamento esperados." >&2
+            exit 1
+          fi
+
+          {
+            echo "namespace=${NAMESPACE}"
+            echo "bucket=${TF_STATE_BUCKET}"
+            echo "region=${OCI_CLI_REGION}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Validar secret PostgreSQL existente sem alterações (PR)
+        id: secrets_preflight_pr
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          VAULTS=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms management vault list \
+            --compartment-id "${OCI_CLI_COMPARTMENT}" \
+            --all \
+            --query 'data')
+          MATCHING_VAULTS=$(jq -c \
+            '[.[] | select(."display-name" == "solidarytech-vault-prod")]' <<<"${VAULTS}")
+          VAULT_COUNT=$(jq 'length' <<<"${MATCHING_VAULTS}")
+          if [[ "${VAULT_COUNT}" -ne 1 ]]; then
+            echo "ERRO: Vault solidarytech-vault-prod ausente ou ambíguo; execute o preflight manual antes do PR." >&2
+            exit 1
+          fi
+
+          VAULT_ID=$(jq -r '.[0].id' <<<"${MATCHING_VAULTS}")
+          VAULT=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms management vault get \
+            --vault-id "${VAULT_ID}" \
+            --query 'data')
+          if [[ "$(jq -r '."lifecycle-state"' <<<"${VAULT}")" != "ACTIVE" ]]; then
+            echo "ERRO: Vault solidarytech-vault-prod não está ACTIVE." >&2
+            exit 1
+          fi
+
+          SECRETS=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret list \
+            --compartment-id "${OCI_CLI_COMPARTMENT}" \
+            --vault-id "${VAULT_ID}" \
+            --name solidarytech-postgres-password \
+            --all \
+            --query 'data')
+          MATCHING_SECRETS=$(jq -c \
+            '[.[] | select(."secret-name" == "solidarytech-postgres-password" and ."lifecycle-state" == "ACTIVE")]' \
+            <<<"${SECRETS}")
+          SECRET_COUNT=$(jq 'length' <<<"${MATCHING_SECRETS}")
+          if [[ "${SECRET_COUNT}" -ne 1 ]]; then
+            echo "ERRO: Secret PostgreSQL ACTIVE ausente ou ambíguo; execute o preflight manual antes do PR." >&2
+            exit 1
+          fi
+
+          echo "secret_id=$(jq -r '.[0].id' <<<"${MATCHING_SECRETS}")" >>"${GITHUB_OUTPUT}"
 
       - name: Setup Terraform (1.12.0+ para backend nativo OCI)
         uses: hashicorp/setup-terraform@v3
@@ -99,10 +177,10 @@ jobs:
           export OCI_REGION="$OCI_CLI_REGION"
 
           terraform init -input=false \
-            -backend-config="namespace=${{ steps.preflight.outputs.namespace }}" \
-            -backend-config="bucket=${{ steps.preflight.outputs.bucket }}" \
+            -backend-config="namespace=${{ steps.preflight.outputs.namespace || steps.preflight_pr.outputs.namespace }}" \
+            -backend-config="bucket=${{ steps.preflight.outputs.bucket || steps.preflight_pr.outputs.bucket }}" \
             -backend-config="key=${{ inputs.state_key }}" \
-            -backend-config="region=${{ steps.preflight.outputs.region }}"
+            -backend-config="region=${{ steps.preflight.outputs.region || steps.preflight_pr.outputs.region }}"
 
       - name: Terraform Validate & Plan
         id: plan
@@ -115,14 +193,14 @@ jobs:
           export OCI_USER_OCID="$OCI_CLI_USER"
           export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
           export OCI_REGION="$OCI_CLI_REGION"
-          export TF_VAR_db_secret_id="${{ steps.secrets_preflight.outputs.secret_id }}"
+          export TF_VAR_db_secret_id="${{ steps.secrets_preflight.outputs.secret_id || steps.secrets_preflight_pr.outputs.secret_id }}"
 
           terraform validate
           terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
         id: apply
-        if: inputs.action == 'apply'
+        if: inputs.action == 'apply' && github.event_name != 'pull_request'
         working-directory: ${{ inputs.working_directory }}
         run: |
           export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
@@ -140,44 +218,44 @@ jobs:
           echo '```' >> /tmp/tf_outputs.md
 
       - name: Setup Helm para remoção do Ingress
-        if: inputs.action == 'destroy'
+        if: inputs.action == 'destroy' && github.event_name != 'pull_request'
         uses: azure/setup-helm@v4
         with:
           version: v3.16.4
 
       - name: Remover Load Balancer do Ingress antes do destroy
-        if: inputs.action == 'destroy'
+        if: inputs.action == 'destroy' && github.event_name != 'pull_request'
+        working-directory: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
 
-          CLUSTERS=$(oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster list \
-            --compartment-id "${OCI_CLI_COMPARTMENT}" \
-            --all \
-            --query 'data')
-          MATCHING_CLUSTERS=$(jq -c \
-            '[.[] | select(.name == "solidarytech-oke-prod")]' <<<"${CLUSTERS}")
-          CLUSTER_COUNT=$(jq 'length' <<<"${MATCHING_CLUSTERS}")
+          export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
+          export OCI_PRIVATE_KEY_PATH="$HOME/.oci/oci_api_key.pem"
+          export OCI_TENANCY_OCID="$OCI_CLI_TENANCY"
+          export OCI_USER_OCID="$OCI_CLI_USER"
+          export OCI_FINGERPRINT="$OCI_CLI_FINGERPRINT"
+          export OCI_REGION="$OCI_CLI_REGION"
 
-          if [[ "${CLUSTER_COUNT}" -eq 0 ]]; then
-            echo "Cluster solidarytech-oke-prod não encontrado; nenhum Ingress a remover."
+          TERRAFORM_OUTPUTS=$(terraform output -json)
+          OKE_CLUSTER_ID=$(jq -r '.oke_cluster_id.value // empty' <<<"${TERRAFORM_OUTPUTS}")
+          if [[ -z "${OKE_CLUSTER_ID}" ]]; then
+            echo "Output oke_cluster_id ausente; nenhum cluster identificado para a limpeza preventiva."
             exit 0
           fi
-          if [[ "${CLUSTER_COUNT}" -ne 1 ]]; then
-            echo "ERRO: Encontrados ${CLUSTER_COUNT} clusters chamados solidarytech-oke-prod." >&2
-            exit 1
-          fi
 
-          CLUSTER_ID=$(jq -r '.[0].id' <<<"${MATCHING_CLUSTERS}")
-          CLUSTER_STATE=$(jq -r '.[0]."lifecycle-state"' <<<"${MATCHING_CLUSTERS}")
+          CLUSTER=$(oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster get \
+            --cluster-id "${OKE_CLUSTER_ID}" \
+            --query 'data')
+          CLUSTER_STATE=$(jq -r '."lifecycle-state"' <<<"${CLUSTER}")
           if [[ "${CLUSTER_STATE}" != "ACTIVE" ]]; then
-            echo "Cluster solidarytech-oke-prod não está ACTIVE (${CLUSTER_STATE}); nenhum Ingress a remover."
+            echo "Cluster OKE não está ACTIVE (${CLUSTER_STATE}); nenhum Ingress a remover."
             exit 0
           fi
 
           mkdir -p "${HOME}/.kube"
           chmod 700 "${HOME}/.kube"
           oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster create-kubeconfig \
-            --cluster-id "${CLUSTER_ID}" \
+            --cluster-id "${OKE_CLUSTER_ID}" \
             --file "${HOME}/.kube/config" \
             --overwrite \
             --token-version 2.0.0 \
@@ -195,7 +273,7 @@ jobs:
 
       - name: Terraform Destroy
         id: destroy
-        if: inputs.action == 'destroy'
+        if: inputs.action == 'destroy' && github.event_name != 'pull_request'
         working-directory: ${{ inputs.working_directory }}
         run: |
           export TF_VAR_private_key_path="$HOME/.oci/oci_api_key.pem"
@@ -216,16 +294,16 @@ jobs:
             echo ""
             echo "| Etapa | Status |"
             echo "|---|---|"
-            echo "| Preflight & State Bucket | \`${{ steps.preflight.outcome }}\` |"
-            echo "| Preflight & OCI Vault Secrets | \`${{ steps.secrets_preflight.outcome }}\` |"
+            echo "| Preflight & State Bucket | \`${{ steps.preflight.outcome == 'success' && steps.preflight.outcome || steps.preflight_pr.outcome }}\` |"
+            echo "| Preflight & OCI Vault Secrets | \`${{ steps.secrets_preflight.outcome == 'success' && steps.secrets_preflight.outcome || steps.secrets_preflight_pr.outcome }}\` |"
             echo "| Terraform Init | \`${{ steps.init.outcome }}\` |"
             echo "| Terraform Validate & Plan | \`${{ steps.plan.outcome }}\` |"
             echo "| Terraform Apply | \`${{ steps.apply.outcome }}\` |"
             echo "| Terraform Destroy | \`${{ steps.destroy.outcome }}\` |"
             echo ""
             echo "- **Diretório:** \`${{ inputs.working_directory }}\`"
-            echo "- **Bucket State:** \`${{ steps.preflight.outputs.bucket }}\` (Namespace: \`${{ steps.preflight.outputs.namespace }}\`)"
-            echo "- **Vault Secret ID:** \`${{ steps.secrets_preflight.outputs.secret_id }}\`"
+            echo "- **Bucket State:** \`${{ steps.preflight.outputs.bucket || steps.preflight_pr.outputs.bucket }}\` (Namespace: \`${{ steps.preflight.outputs.namespace || steps.preflight_pr.outputs.namespace }}\`)"
+            echo "- **Vault Secret ID:** \`${{ steps.secrets_preflight.outputs.secret_id || steps.secrets_preflight_pr.outputs.secret_id }}\`"
             echo "- **Arquivo State:** \`${{ inputs.state_key }}\`"
             echo ""
             if [[ -f /tmp/tf_outputs.md ]]; then
