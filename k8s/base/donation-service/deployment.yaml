@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: donation-service
-          image: donation-service:latest
+          image: gru.ocir.io/grqecn36frj4/solidarytech/donation-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

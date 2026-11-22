@@ -13,8 +13,13 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: initialize-databases
-          image: postgres:15-alpine
+          image: docker.io/library/postgres:15-alpine
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           command:
             - /bin/sh
             - -ec
@@ -25,18 +30,16 @@ spec:
                 sleep 5
               done
 
-              for database in ngos donations; do
-                exists=$(psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
-                  --username="${POSTGRES_USER}" \
-                  --dbname=postgres --tuples-only --no-align \
-                  --command="SELECT 1 FROM pg_database WHERE datname = '${database}'")
-                if [ "${exists}" != "1" ]; then
-                  psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
-                    --username="${POSTGRES_USER}" \
-                    --dbname=postgres --set=ON_ERROR_STOP=1 \
-                    --command="CREATE DATABASE \"${database}\""
-                fi
-              done
+              psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+                --username="${POSTGRES_USER}" \
+                --dbname=postgres --set=ON_ERROR_STOP=1 <<'SQL'
+              SELECT 'CREATE DATABASE ngos'
+              WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'ngos')
+              \gexec
+              SELECT 'CREATE DATABASE donations'
+              WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'donations')
+              \gexec
+              SQL
 
               psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
                 --username="${POSTGRES_USER}" \

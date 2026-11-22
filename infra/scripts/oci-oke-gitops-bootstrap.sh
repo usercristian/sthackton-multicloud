@@ -13,7 +13,7 @@ VAULT_NAME="solidarytech-vault-prod"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
 DB_SECRET_NAME="solidarytech-postgres-password"
 ARGOCD_ADMIN_PASSWORD_SECRET_NAME="solidarytech-argocd-admin-password"
-REGISTRY="sa-saopaulo-1.ocir.io"
+REGISTRY="gru.ocir.io"
 POSTGRES_USER="${POSTGRES_ADMIN_USERNAME}"
 POSTGRES_PORT="5432"
 

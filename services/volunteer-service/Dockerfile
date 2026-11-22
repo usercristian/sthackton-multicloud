@@ -4,6 +4,7 @@ FROM python:${PYTHON_VERSION}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HOME=/tmp \
     PORT=8083
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser

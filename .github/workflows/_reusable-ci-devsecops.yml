@@ -265,13 +265,13 @@ jobs:
             exit 1
           fi
 
-          printf '%s' "${OCIR_TOKEN}" | docker login sa-saopaulo-1.ocir.io \
+          printf '%s' "${OCIR_TOKEN}" | docker login gru.ocir.io \
             -u "${TENANCY_NAMESPACE}/${OCI_USERNAME}" \
             --password-stdin
           unset OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64 OCI_CLI_KEY_CONTENT
 
           LOCAL_IMAGE="solidarytech/${SERVICE_NAME}:${GITHUB_SHA}"
-          OCIR_IMAGE="sa-saopaulo-1.ocir.io/${TENANCY_NAMESPACE}/solidarytech/${SERVICE_NAME}"
+          OCIR_IMAGE="gru.ocir.io/${TENANCY_NAMESPACE}/solidarytech/${SERVICE_NAME}"
           docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:${GITHUB_SHA}"
           docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:latest"
           docker push "${OCIR_IMAGE}:${GITHUB_SHA}"

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: volunteer-service
-          image: volunteer-service:latest
+          image: gru.ocir.io/grqecn36frj4/solidarytech/volunteer-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

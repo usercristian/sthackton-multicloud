@@ -5,6 +5,7 @@ FROM python:${PYTHON_VERSION}
 # Evita geração de arquivos .pyc e força logs imediatos no stdout/stderr do Kubernetes
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HOME=/tmp \
     PORT=8081
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser

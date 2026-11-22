@@ -177,7 +177,7 @@ jobs:
 
           for index, line in enumerate(lines):
               if line.startswith("  - name: "):
-                  current_image = line.removeprefix("  - name: ").strip()
+                  current_image = line.removeprefix("  - name: ").strip().rsplit("/", 1)[-1]
               elif current_image in selected and line.startswith("    newTag: "):
                   lines[index] = f"    newTag: {image_tag}\n"
                   updates[current_image] += 1
