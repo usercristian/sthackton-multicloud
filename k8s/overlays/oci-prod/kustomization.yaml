@@ -16,13 +16,13 @@ generatorOptions:
 images:
   - name: ngo-service
     newName: sa-saopaulo-1.ocir.io/grqecn36frj4/solidarytech/ngo-service
-    newTag: latest
+    newTag: 32d4b66cbdb62345a3a21699abeef006f5a24125
   - name: donation-service
     newName: sa-saopaulo-1.ocir.io/grqecn36frj4/solidarytech/donation-service
-    newTag: latest
+    newTag: 32d4b66cbdb62345a3a21699abeef006f5a24125
   - name: volunteer-service
     newName: sa-saopaulo-1.ocir.io/grqecn36frj4/solidarytech/volunteer-service
-    newTag: latest
+    newTag: 32d4b66cbdb62345a3a21699abeef006f5a24125
 patches:
   - target:
       group: apps
