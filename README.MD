@@ -87,21 +87,34 @@ O pipeline configura:
 - Go: `go build`, `go test`, `go vet` e `golangci-lint`.
 - Python: compilação de sintaxe e `pytest` (a ausência de testes é aceita), além de verificações selecionadas do Flake8.
 - Segurança: gosec para Go, Bandit para Python e Trivy para vulnerabilidades/secrets em arquivos e imagens, bloqueando achados CRITICAL.
-- Container: build da imagem para `linux/arm64` e scan com Trivy.
+- Container: build da imagem para `linux/arm64` e scan com Trivy. Em `push` para `master` e em `workflow_dispatch`, publica no OCIR as tags do SHA curto e `latest`; pull requests apenas constroem e analisam as imagens.
 
-O build de container não publica imagens nem realiza deploy. Ainda não há manifestos Kubernetes ou configuração GitOps neste repositório, mas a camada de infraestrutura como código (Terraform + GitHub Actions) já está ativa. Atualmente não há arquivos de teste dos serviços; o pipeline executa os comandos de teste, mas isso não significa que existam testes funcionais implementados.
+O workflow de publicação usa as credenciais de API OCI configuradas como secrets do GitHub Actions (`OCI_TENANCY_OCID`, `OCI_USER_OCID`, `OCI_FINGERPRINT`, `OCI_PRIVATE_KEY` e `OCI_COMPARTMENT_OCID`). Em push para `master` ou `workflow_dispatch`, o job preparatório executa o preflight de secrets uma vez antes dos jobs dos serviços; assim, o Vault `solidarytech-vault-prod` e o Auth Token `solidarytech-ocir-token` são criados se necessário. O token é lido pelo runner apenas durante o login via `--password-stdin` e não é escrito nos logs ou nos manifestos. Pull requests não executam o preflight OCI.
+
+O pipeline não realiza deploy. Atualmente não há arquivos de teste dos serviços; o pipeline executa os comandos de teste, mas isso não significa que existam testes funcionais implementados.
+
+## Kubernetes e Kustomize
+
+Os recursos estão organizados em `k8s/base/` (Namespace, Deployments e Services `ClusterIP`) e `k8s/overlays/oci-prod/` (ConfigMap, Job de inicialização PostgreSQL, Ingress e configuração das imagens OCIR). Os Deployments usam probes HTTP em `/health` para liveness e readiness e limites de recursos adequados aos workers ARM64. O Job cria os bancos `ngos` e `donations` se ainda não existirem e executa os scripts SQL versionados em `services/`.
+
+O overlay usa `PLACEHOLDER_NAMESPACE` nas referências OCIR; substitua-o pelo namespace OCI antes de aplicar por um fluxo GitOps. O namespace `solidarytech` também precisa conter os secrets provisionados fora destes manifests:
+
+- `ocir-secret`, do tipo `kubernetes.io/dockerconfigjson`, para pull das imagens privadas no OCIR.
+- `solidarytech-db-secret`, com as chaves `POSTGRES_HOST`, `POSTGRES_USER` e `POSTGRES_PASSWORD`, usadas pelo Job e pelos serviços PostgreSQL.
+
+O ConfigMap define a tabela DynamoDB `solidarytech-volunteers` e a região `us-east-1`; a tabela deve existir na AWS e as credenciais AWS do `volunteer-service` precisam ser disponibilizadas por um mecanismo de identidade configurado fora destes manifests. O Ingress pressupõe um controller instalado com a classe `nginx`. Como os arquivos SQL do `configMapGenerator` ficam fora da pasta do overlay, a renderização local requer `kubectl kustomize --load-restrictor=LoadRestrictionsNone k8s/overlays/oci-prod`; execute essa opção apenas para este repositório confiável. A renderização não aplica recursos ao cluster.
 
 ## Infraestrutura como Código (IaC) e Automação OCI
 
 A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) está organizada de forma modular em `infra/`:
 
 - `infra/scripts/oci-state-preflight.sh`: script idempotente executado antes do `terraform init` para validar ou criar o bucket privado e versionado de estado remoto (`solidarytech-tfstate-prod`) no Object Storage.
-- `infra/scripts/oci-secrets-preflight.sh`: bootstrap idempotente e persistente do OCI Vault `solidarytech-vault-prod`, da Master Key AES-256/SOFTWARE e do segredo da senha do banco; esses recursos ficam fora do ciclo de `terraform destroy`.
+- `infra/scripts/oci-secrets-preflight.sh`: bootstrap idempotente e persistente do OCI Vault `solidarytech-vault-prod`, da Master Key AES-256/SOFTWARE, do segredo da senha do banco e do Auth Token do OCIR (`solidarytech-ocir-token`); esses recursos ficam fora do ciclo de `terraform destroy`.
 - `infra/modules/oci/network/`: módulo de rede contendo VCN (`10.0.0.0/16`), Internet Gateway, NAT Gateway, Service Gateway, tabelas de roteamento, Security Lists (incluindo regras de registro de workers OKE em `TCP/6443`, `TCP/12250` e `ICMP 3/4`) e sub-redes isoladas (`public-lb`, `private-oke` e `private-db`).
 - `infra/modules/oci/oke/`: módulo de computação e registro de imagens contendo cluster OKE (`BASIC_CLUSTER`, Kubernetes `v1.36.4`), Node Pool ARM64 (`VM.Standard.A2.Flex` com seleção dinâmica de imagem Oracle Linux 8.10 `aarch64` e restrição configurável de Fault Domain) e repositórios privados no OCI Container Registry (`solidarytech/ngo-service`, `solidarytech/donation-service`, `solidarytech/volunteer-service`).
 - `infra/modules/oci/postgres/`: módulo do OCI Database with PostgreSQL, com padrão `PostgreSQL.VM.Standard.E5.Flex` na sub-rede privada `10.0.3.0/24`, credencial `VAULT_SECRET` e acesso ao banco restrito à sub-rede do OKE (`10.0.2.0/24`) em `TCP/5432`.
 - `infra/environments/oci-prod/`: composição do ambiente principal (`main.tf`, `iam.tf`, `variables.tf`, `outputs.tf`, `versions.tf`) utilizando o backend nativo `backend "oci"` (Terraform `1.12.0+`).
-- `.github/workflows/infra-oci-lifecycle.yml` e `.github/workflows/_reusable-terraform.yml`: pipeline manual (`workflow_dispatch`) com controle de concorrência (`terraform-oci-prod`) para executar `preflight-only`, `plan`, `apply` e `destroy`; o workflow reutilizável executa o preflight de secrets, injeta automaticamente `TF_VAR_db_secret_id` e gera sumário detalhado em `$GITHUB_STEP_SUMMARY`.
+- `.github/workflows/infra-oci-lifecycle.yml` e `.github/workflows/_reusable-terraform.yml`: pipeline manual (`workflow_dispatch`) com controle de concorrência (`terraform-oci-prod`) para executar `plan`, `apply` e `destroy`; os preflights de estado e secrets são executados automaticamente antes da ação Terraform, que injeta `TF_VAR_db_secret_id` e gera sumário detalhado em `$GITHUB_STEP_SUMMARY`.
 
 ## Estado do projeto
 
@@ -110,9 +123,10 @@ A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) est�
 - Código dos três microsserviços (`ngo-service`, `donation-service`, `volunteer-service`) com endpoints básicos de saúde e operação.
 - Dockerfiles parametrizados para `linux/arm64` e arquivos de dependências.
 - Scripts SQL iniciais para os bancos PostgreSQL dos serviços de ONGs e doações.
-- Pipeline de CI e DevSecOps (`ci-apps.yml` e `_reusable-ci-devsecops.yml`) com detecção seletiva de alterações (`Scope Discovery`), linters, análise estática de segurança (gosec, Bandit, Trivy) e scan de imagens.
+- Pipeline de CI e DevSecOps (`ci-apps.yml` e `_reusable-ci-devsecops.yml`) com detecção seletiva de alterações (`Scope Discovery`), linters, análise estática de segurança (gosec, Bandit, Trivy), scan de imagens e publicação ARM64 no OCIR.
+- Base Kustomize em `k8s/base/` e overlay `k8s/overlays/oci-prod/` com Namespace, Deployments com probes, Services, Job de inicialização PostgreSQL, ConfigMap e Ingress.
 - Preflight automatizado de estado remoto (`infra/scripts/oci-state-preflight.sh`) com bucket `solidarytech-tfstate-prod` validado na OCI.
-- Bootstrap idempotente e persistente do OCI Vault, Master Key e segredo de senha PostgreSQL (`infra/scripts/oci-secrets-preflight.sh`).
+- Bootstrap idempotente e persistente do OCI Vault, Master Key, segredo de senha PostgreSQL e Auth Token OCIR (`infra/scripts/oci-secrets-preflight.sh`).
 - Módulos OCI de rede (`infra/modules/oci/network`) e Kubernetes/Registry (`infra/modules/oci/oke`), política IAM de serviço (`iam.tf`) e composição `infra/environments/oci-prod` validados via `terraform apply` e `terraform destroy` no GitHub Actions.
 - Módulo PostgreSQL gerenciado (`infra/modules/oci/postgres`); conectividade privada entre OKE ARM64 (`10.0.2.0/24`) e PostgreSQL (`10.0.3.0/24:5432`) validada.
 - Workflows de ciclo de vida da infraestrutura OCI (`infra-oci-lifecycle.yml` e `_reusable-terraform.yml`) com sumário de execução.
@@ -121,7 +135,7 @@ A camada de infraestrutura na Oracle Cloud Infrastructure (`sa-saopaulo-1`) est�
 ### Planejado, ainda não implementado aqui
 
 - Módulos Terraform e ambiente AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby.
-- Manifestos Kubernetes, Helm/Kustomize e entrega contínua via ArgoCD (GitOps).
+- Instalação/configuração do controller NGINX Ingress, provisionamento seguro dos secrets Kubernetes, identidade AWS do `volunteer-service` e entrega contínua via ArgoCD (GitOps).
 - Docker Compose e configuração de ambiente de desenvolvimento local reproduzível.
 - Testes automatizados funcionais dos microsserviços.
 - Dashboards de observabilidade, SLIs/SLOs, APM/AIOps e validação de Disaster Recovery.

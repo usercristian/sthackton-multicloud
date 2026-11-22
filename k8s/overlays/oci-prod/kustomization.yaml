@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: solidarytech
+resources:
+  - ../../base
+  - configmap.yaml
+  - db-init-job.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: solidarytech-db-init
+    files:
+      - ngo-init.sql=../../../services/ngo-service/db/init.sql
+      - donation-init.sql=../../../services/donation-service/db/init.sql
+generatorOptions:
+  disableNameSuffixHash: true
+images:
+  - name: ngo-service
+    newName: sa-saopaulo-1.ocir.io/PLACEHOLDER_NAMESPACE/solidarytech/ngo-service
+    newTag: latest
+  - name: donation-service
+    newName: sa-saopaulo-1.ocir.io/PLACEHOLDER_NAMESPACE/solidarytech/donation-service
+    newTag: latest
+  - name: volunteer-service
+    newName: sa-saopaulo-1.ocir.io/PLACEHOLDER_NAMESPACE/solidarytech/volunteer-service
+    newTag: latest
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: ocir-secret

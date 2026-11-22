@@ -6,10 +6,9 @@ on:
       action:
         description: "Operação de Infraestrutura"
         required: true
-        default: "preflight-only"
+        default: "plan"
         type: choice
         options:
-          - preflight-only
           - plan
           - apply
           - destroy

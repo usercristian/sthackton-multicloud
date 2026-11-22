@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: solidarytech-db-init
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: solidarytech-db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: initialize-databases
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              export PGPASSWORD="${POSTGRES_PASSWORD}"
+              until pg_isready --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" --dbname=postgres; do
+                sleep 5
+              done
+
+              for database in ngos donations; do
+                exists=$(psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+                  --dbname=postgres --tuples-only --no-align \
+                  --command="SELECT 1 FROM pg_database WHERE datname = '${database}'")
+                if [ "${exists}" != "1" ]; then
+                  psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+                    --dbname=postgres --set=ON_ERROR_STOP=1 \
+                    --command="CREATE DATABASE \"${database}\""
+                fi
+              done
+
+              psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+                --dbname=ngos --set=ON_ERROR_STOP=1 --file=/sql/ngo-init.sql
+              psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+                --dbname=donations --set=ON_ERROR_STOP=1 --file=/sql/donation-init.sql
+          env:
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: solidarytech-db-secret
+                  key: POSTGRES_HOST
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: solidarytech-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: solidarytech-db-secret
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          volumeMounts:
+            - name: database-init-sql
+              mountPath: /sql
+              readOnly: true
+      volumes:
+        - name: database-init-sql
+          configMap:
+            name: solidarytech-db-init
+            items:
+              - key: ngo-init.sql
+                path: ngo-init.sql
+              - key: donation-init.sql
+                path: donation-init.sql

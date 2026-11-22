@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       action:
-        description: "Ação a executar (preflight-only, plan, apply, destroy)"
+        description: "Ação a executar (plan, apply ou destroy)"
         required: true
         type: string
       working_directory:
@@ -79,14 +79,12 @@ jobs:
           ./infra/scripts/oci-secrets-preflight.sh
 
       - name: Setup Terraform (1.12.0+ para backend nativo OCI)
-        if: inputs.action != 'preflight-only'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.12.0"
 
       - name: Preparar credencial e inicializar Terraform
         id: init
-        if: inputs.action != 'preflight-only'
         working-directory: ${{ inputs.working_directory }}
         run: |
           mkdir -p ~/.oci

@@ -2,12 +2,15 @@
 set -euo pipefail
 
 : "${OCI_CLI_COMPARTMENT:?Variável OCI_CLI_COMPARTMENT não definida}"
+: "${OCI_CLI_USER:?Variável OCI_CLI_USER não definida}"
 : "${OCI_CLI_REGION:=sa-saopaulo-1}"
 
 VAULT_NAME="solidarytech-vault-prod"
 KEY_NAME="solidarytech-master-key"
 SECRET_NAME="solidarytech-postgres-password"
+OCIR_SECRET_NAME="solidarytech-ocir-token"
 FINOPS_TAGS='{"Project":"Solidary Tech","Environment":"Production","CostCenter":"NGO-Core","ManagedBy":"CI-Preflight"}'
+trap 'unset GENERATED_PASSWORD SECRET_CONTENT_BASE64 GENERATED_OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64' EXIT
 
 for command in oci jq openssl base64; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -139,7 +142,6 @@ SECRET_ID=$(jq -r --arg name "${SECRET_NAME}" \
 
 if [[ -z "${SECRET_ID}" ]]; then
   echo "Secret '${SECRET_NAME}' não encontrado. Criando..."
-  trap 'unset GENERATED_PASSWORD SECRET_CONTENT_BASE64' EXIT
   GENERATED_PASSWORD="St@$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-18)9!"
   SECRET_CONTENT_BASE64=$(printf '%s' "${GENERATED_PASSWORD}" | base64 -w 0)
   SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret create-base64 \
@@ -154,7 +156,6 @@ if [[ -z "${SECRET_ID}" ]]; then
     --query 'data')
   SECRET_ID=$(jq -r '.id' <<<"${SECRET_JSON}")
   unset GENERATED_PASSWORD SECRET_CONTENT_BASE64
-  trap - EXIT
 else
   SECRET_COUNT=$(jq --arg name "${SECRET_NAME}" \
     '[.[] | select(."secret-name" == $name)] | length' <<<"${SECRETS}")
@@ -182,9 +183,72 @@ done
 
 echo "Secret '${SECRET_NAME}' ativo."
 
+OCIR_SECRETS=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret list \
+  --compartment-id "${OCI_CLI_COMPARTMENT}" \
+  --vault-id "${VAULT_ID}" \
+  --name "${OCIR_SECRET_NAME}" \
+  --all \
+  --query 'data')
+MATCHING_OCIR_SECRETS=$(jq -c --arg name "${OCIR_SECRET_NAME}" \
+  '[.[] | select(."secret-name" == $name)]' <<<"${OCIR_SECRETS}")
+OCIR_SECRET_COUNT=$(jq 'length' <<<"${MATCHING_OCIR_SECRETS}")
+
+if [[ "${OCIR_SECRET_COUNT}" -gt 1 ]]; then
+  echo "ERRO: Mais de um secret '${OCIR_SECRET_NAME}' foi encontrado no Vault." >&2
+  exit 1
+fi
+
+if [[ "${OCIR_SECRET_COUNT}" -eq 0 ]]; then
+  echo "Secret '${OCIR_SECRET_NAME}' não encontrado. Criando Auth Token do OCIR..."
+  GENERATED_OCIR_TOKEN=$(oci --auth api_key --region "${OCI_CLI_REGION}" iam auth-token create \
+    --user-id "${OCI_CLI_USER}" \
+    --description "solidarytech-ocir-ci-token" \
+    --query 'data.token' \
+    --raw-output)
+  if [[ -z "${GENERATED_OCIR_TOKEN}" || "${GENERATED_OCIR_TOKEN}" == "null" ]]; then
+    echo "ERRO: OCI não retornou o Auth Token do OCIR." >&2
+    exit 1
+  fi
+
+  OCIR_SECRET_CONTENT_BASE64=$(printf '%s' "${GENERATED_OCIR_TOKEN}" | base64 -w 0)
+  OCIR_SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret create-base64 \
+    --compartment-id "${OCI_CLI_COMPARTMENT}" \
+    --vault-id "${VAULT_ID}" \
+    --key-id "${KEY_ID}" \
+    --secret-name "${OCIR_SECRET_NAME}" \
+    --secret-content-content "${OCIR_SECRET_CONTENT_BASE64}" \
+    --secret-content-name initial \
+    --secret-content-stage CURRENT \
+    --freeform-tags "${FINOPS_TAGS}" \
+    --query 'data')
+  OCIR_SECRET_ID=$(jq -r '.id' <<<"${OCIR_SECRET_JSON}")
+  unset GENERATED_OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64
+else
+  OCIR_SECRET_ID=$(jq -r '.[0].id' <<<"${MATCHING_OCIR_SECRETS}")
+fi
+
+OCIR_SECRET_STATE=""
+for attempt in {1..120}; do
+  OCIR_SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret get \
+    --secret-id "${OCIR_SECRET_ID}" \
+    --query 'data')
+  OCIR_SECRET_STATE=$(jq -r '."lifecycle-state"' <<<"${OCIR_SECRET_JSON}")
+  if [[ "${OCIR_SECRET_STATE}" == "ACTIVE" ]]; then
+    break
+  fi
+  if [[ "${OCIR_SECRET_STATE}" == "FAILED" || "${OCIR_SECRET_STATE}" == "DELETED" || "${attempt}" -eq 120 ]]; then
+    echo "ERRO: Secret '${OCIR_SECRET_NAME}' não atingiu ACTIVE (estado: ${OCIR_SECRET_STATE})." >&2
+    exit 1
+  fi
+  sleep 10
+done
+
+echo "Secret '${OCIR_SECRET_NAME}' ativo."
+
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
     echo "vault_id=${VAULT_ID}"
     echo "secret_id=${SECRET_ID}"
+    echo "ocir_secret_id=${OCIR_SECRET_ID}"
   } >>"${GITHUB_OUTPUT}"
 fi

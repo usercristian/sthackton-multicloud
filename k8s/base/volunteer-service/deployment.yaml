@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: volunteer-service
+  labels:
+    app: volunteer-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: volunteer-service
+  template:
+    metadata:
+      labels:
+        app: volunteer-service
+    spec:
+      containers:
+        - name: volunteer-service
+          image: volunteer-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8083
+              protocol: TCP
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: solidarytech-config
+                  key: VOLUNTEER_PORT
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: solidarytech-config
+                  key: AWS_REGION
+            - name: AWS_DYNAMODB_TABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: solidarytech-config
+                  key: AWS_DYNAMODB_TABLE
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi

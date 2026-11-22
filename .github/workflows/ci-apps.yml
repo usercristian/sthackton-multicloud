@@ -20,6 +20,41 @@ on:
   workflow_dispatch:
 
 jobs:
+  ensure-oci-vault:
+    name: Ensure OCI Vault & OCIR token
+    runs-on: ubuntu-latest
+    concurrency:
+      group: oci-vault-secrets-preflight
+      cancel-in-progress: false
+    steps:
+      - name: Checkout do código
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Python para OCI CLI
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar OCI CLI
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+        run: |
+          python -m pip install --disable-pip-version-check oci-cli
+
+      - name: Preflight automático de OCI Vault e Auth Token OCIR
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+        env:
+          OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_CLI_COMPARTMENT: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_CLI_REGION: sa-saopaulo-1
+        run: |
+          chmod +x infra/scripts/oci-secrets-preflight.sh
+          ./infra/scripts/oci-secrets-preflight.sh
+
   detect-changes:
     name: Scope Discovery
     runs-on: ubuntu-latest
@@ -61,30 +96,51 @@ jobs:
 
   donation-service:
     name: donation-service
-    needs: detect-changes
+    needs: [detect-changes, ensure-oci-vault]
     if: needs.detect-changes.outputs.donation == 'true'
     uses: ./.github/workflows/_reusable-ci-devsecops.yml
     with:
       service_name: donation-service
       service_path: services/donation-service
       language: go
+      push_image: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+    secrets:
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
 
   ngo-service:
     name: ngo-service
-    needs: detect-changes
+    needs: [detect-changes, ensure-oci-vault]
     if: needs.detect-changes.outputs.ngo == 'true'
     uses: ./.github/workflows/_reusable-ci-devsecops.yml
     with:
       service_name: ngo-service
       service_path: services/ngo-service
       language: python
+      push_image: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+    secrets:
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
 
   volunteer-service:
     name: volunteer-service
-    needs: detect-changes
+    needs: [detect-changes, ensure-oci-vault]
     if: needs.detect-changes.outputs.volunteer == 'true'
     uses: ./.github/workflows/_reusable-ci-devsecops.yml
     with:
       service_name: volunteer-service
       service_path: services/volunteer-service
       language: python
+      push_image: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch' }}
+    secrets:
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}

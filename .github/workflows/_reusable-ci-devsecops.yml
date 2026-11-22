@@ -15,6 +15,22 @@ on:
         description: "Linguagem do serviço (go ou python)"
         required: true
         type: string
+      push_image:
+        description: "Publicar a imagem no OCIR após o scan"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      OCI_TENANCY_OCID:
+        required: false
+      OCI_USER_OCID:
+        required: false
+      OCI_FINGERPRINT:
+        required: false
+      OCI_PRIVATE_KEY:
+        required: false
+      OCI_COMPARTMENT_OCID:
+        required: false
 
 jobs:
   # =========================================================================
@@ -172,3 +188,107 @@ jobs:
       - name: Container Scan (Trivy Image — Bloqueia em CRITICAL)
         run: |
           trivy image --severity CRITICAL --exit-code 1 solidarytech/${{ inputs.service_name }}:${{ github.sha }}
+
+      - name: Setup Python para OCI CLI
+        if: inputs.push_image
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar OCI CLI
+        if: inputs.push_image
+        run: |
+          python -m pip install --disable-pip-version-check oci-cli
+
+      - name: Publicar imagem ARM64 no OCIR
+        if: inputs.push_image
+        env:
+          OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_CLI_COMPARTMENT: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_CLI_REGION: sa-saopaulo-1
+          SERVICE_NAME: ${{ inputs.service_name }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${OCI_CLI_TENANCY:?Secret OCI_TENANCY_OCID não configurado}"
+          : "${OCI_CLI_USER:?Secret OCI_USER_OCID não configurado}"
+          : "${OCI_CLI_FINGERPRINT:?Secret OCI_FINGERPRINT não configurado}"
+          : "${OCI_CLI_KEY_CONTENT:?Secret OCI_PRIVATE_KEY não configurado}"
+          : "${OCI_CLI_COMPARTMENT:?Secret OCI_COMPARTMENT_OCID não configurado}"
+
+          OCI_CONFIG_DIR="${RUNNER_TEMP}/solidarytech-oci"
+          OCI_CONFIG_FILE="${OCI_CONFIG_DIR}/config"
+          OCI_KEY_FILE="${OCI_CONFIG_DIR}/oci_api_key.pem"
+          DOCKER_CONFIG="${RUNNER_TEMP}/solidarytech-docker"
+          export DOCKER_CONFIG
+          mkdir -m 700 -p "${OCI_CONFIG_DIR}" "${DOCKER_CONFIG}"
+          umask 077
+          printf '%s\n' "${OCI_CLI_KEY_CONTENT}" > "${OCI_KEY_FILE}"
+          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=%s\n' \
+            "${OCI_CLI_USER}" \
+            "${OCI_CLI_FINGERPRINT}" \
+            "${OCI_CLI_TENANCY}" \
+            "${OCI_CLI_REGION}" \
+            "${OCI_KEY_FILE}" > "${OCI_CONFIG_FILE}"
+
+          TENANCY_NAMESPACE=$(oci --config-file "${OCI_CONFIG_FILE}" --auth api_key \
+            os ns get --query 'data' --raw-output)
+          OCI_USERNAME=$(oci --config-file "${OCI_CONFIG_FILE}" --auth api_key \
+            iam user get --user-id "${OCI_CLI_USER}" --query 'data.name' --raw-output)
+          VAULTS=$(oci --config-file "${OCI_CONFIG_FILE}" --auth api_key \
+            kms management vault list \
+            --compartment-id "${OCI_CLI_COMPARTMENT}" \
+            --all \
+            --query 'data')
+          MATCHING_VAULTS=$(jq -c \
+            '[.[] | select(."display-name" == "solidarytech-vault-prod")]' <<<"${VAULTS}")
+          VAULT_COUNT=$(jq 'length' <<<"${MATCHING_VAULTS}")
+          if [[ "${VAULT_COUNT}" -ne 1 ]]; then
+            echo "ERRO: Esperado exatamente um Vault 'solidarytech-vault-prod'; encontrados: ${VAULT_COUNT}." >&2
+            exit 1
+          fi
+          VAULT_ID=$(jq -r '.[0].id' <<<"${MATCHING_VAULTS}")
+
+          OCIR_SECRET_CONTENT_BASE64=$(oci --config-file "${OCI_CONFIG_FILE}" --auth api_key \
+            vault secret-bundle get-secret-bundle-by-name \
+            --vault-id "${VAULT_ID}" \
+            --secret-name "solidarytech-ocir-token" \
+            --stage CURRENT \
+            --query 'data."secret-bundle-content".content' \
+            --raw-output)
+          OCIR_TOKEN=$(printf '%s' "${OCIR_SECRET_CONTENT_BASE64}" | base64 --decode)
+          if [[ -z "${TENANCY_NAMESPACE}" || -z "${OCI_USERNAME}" || -z "${OCIR_TOKEN}" ]]; then
+            echo "ERRO: Namespace, usuário ou Auth Token do OCIR não foi retornado." >&2
+            exit 1
+          fi
+
+          printf '%s' "${OCIR_TOKEN}" | docker login sa-saopaulo-1.ocir.io \
+            -u "${TENANCY_NAMESPACE}/${OCI_USERNAME}" \
+            --password-stdin
+          unset OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64 OCI_CLI_KEY_CONTENT
+
+          LOCAL_IMAGE="solidarytech/${SERVICE_NAME}:${GITHUB_SHA}"
+          OCIR_IMAGE="sa-saopaulo-1.ocir.io/${TENANCY_NAMESPACE}/solidarytech/${SERVICE_NAME}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:${SHORT_SHA}"
+          docker tag "${LOCAL_IMAGE}" "${OCIR_IMAGE}:latest"
+          docker push "${OCIR_IMAGE}:${SHORT_SHA}"
+          docker push "${OCIR_IMAGE}:latest"
+          echo "Imagem publicada: ${OCIR_IMAGE}:${SHORT_SHA} e :latest (linux/arm64)."
+
+      - name: Limpar credenciais temporárias OCI e Docker
+        if: always() && inputs.push_image
+        run: |
+          for directory in \
+            "${RUNNER_TEMP}/solidarytech-oci" \
+            "${RUNNER_TEMP}/solidarytech-docker"; do
+            if [[ -d "${directory}" ]]; then
+              rm -f "${directory}/config" \
+                "${directory}/oci_api_key.pem" \
+                "${directory}/config.json"
+              rmdir "${directory}"
+            fi
+          done
