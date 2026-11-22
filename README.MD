@@ -33,7 +33,7 @@ Os serviços leem variáveis do ambiente e também tentam carregar um arquivo `.
 
 Os serviços que acessam AWS também precisam de credenciais configuradas pelo mecanismo padrão do AWS SDK. Não armazene credenciais no repositório.
 
-Os scripts [`ngo-service/db/init.sql`](./ngo-service/db/init.sql) e [`donation-service/db/init.sql`](./donation-service/db/init.sql) criam as respectivas tabelas PostgreSQL. O primeiro também insere dois registros de exemplo. Execute cada script uma vez contra o banco usado pelo serviço correspondente. A criação da tabela DynamoDB não está automatizada neste repositório.
+Os scripts [`services/ngo-service/db/init.sql`](./services/ngo-service/db/init.sql) e [`services/donation-service/db/init.sql`](./services/donation-service/db/init.sql) criam as respectivas tabelas PostgreSQL. O primeiro também insere dois registros de exemplo. Execute cada script uma vez contra o banco usado pelo serviço correspondente. A criação da tabela DynamoDB não está automatizada neste repositório.
 
 ## Execução local
 
@@ -44,7 +44,7 @@ Não há Docker Compose ou automação local para provisionar PostgreSQL/DynamoD
 Requer Python 3.11 e PostgreSQL com o schema inicial aplicado.
 
 ```bash
-cd ngo-service
+cd services/ngo-service
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -57,7 +57,7 @@ python app.py
 Requer Go 1.25.7 e PostgreSQL com o schema inicial aplicado. Para executar sem integração SQS, basta configurar `DATABASE_URL`.
 
 ```bash
-cd donation-service
+cd services/donation-service
 export DATABASE_URL="postgresql://usuario:senha@localhost:5432/donations"
 go run .
 ```
@@ -69,7 +69,7 @@ Para habilitar o SQS, configure também `AWS_SQS_URL`, `AWS_REGION` e as credenc
 Requer Python 3.11, uma tabela DynamoDB existente e credenciais AWS.
 
 ```bash
-cd volunteer-service
+cd services/volunteer-service
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

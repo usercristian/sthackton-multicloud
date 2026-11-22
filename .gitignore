@@ -18,7 +18,7 @@ coverage.*
 bin/
 *.test
 *.out
-/donation-service/donation-service
+/services/donation-service/donation-service
 
 # Terraform state and local configuration
 **/.terraform/*
