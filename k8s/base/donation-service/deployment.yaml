@@ -28,23 +28,11 @@ spec:
                 configMapKeyRef:
                   name: solidarytech-config
                   key: DONATION_PORT
-            - name: POSTGRES_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: solidarytech-db-secret
-                  key: POSTGRES_HOST
-            - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: solidarytech-db-secret
-                  key: POSTGRES_USER
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: solidarytech-db-secret
-                  key: POSTGRES_PASSWORD
             - name: DATABASE_URL
-              value: "host=$(POSTGRES_HOST) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=donations port=5432 sslmode=require"
+              valueFrom:
+                secretKeyRef:
+                  name: solidarytech-db-secret
+                  key: DONATION_DATABASE_URL
           livenessProbe:
             httpGet:
               path: /health

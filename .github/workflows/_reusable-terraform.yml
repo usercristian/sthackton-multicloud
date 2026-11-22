@@ -139,6 +139,55 @@ jobs:
           terraform output -json >> /tmp/tf_outputs.md
           echo '```' >> /tmp/tf_outputs.md
 
+      - name: Setup Helm para remoção do Ingress
+        if: inputs.action == 'destroy'
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Remover Load Balancer do NGINX antes do destroy
+        if: inputs.action == 'destroy'
+        run: |
+          set -euo pipefail
+
+          CLUSTERS=$(oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster list \
+            --compartment-id "${OCI_CLI_COMPARTMENT}" \
+            --all \
+            --query 'data')
+          MATCHING_CLUSTERS=$(jq -c \
+            '[.[] | select(.name == "solidarytech-oke-prod")]' <<<"${CLUSTERS}")
+          CLUSTER_COUNT=$(jq 'length' <<<"${MATCHING_CLUSTERS}")
+
+          if [[ "${CLUSTER_COUNT}" -eq 0 ]]; then
+            echo "Cluster solidarytech-oke-prod não encontrado; nenhum Ingress a remover."
+            exit 0
+          fi
+          if [[ "${CLUSTER_COUNT}" -ne 1 ]]; then
+            echo "ERRO: Encontrados ${CLUSTER_COUNT} clusters chamados solidarytech-oke-prod." >&2
+            exit 1
+          fi
+
+          CLUSTER_ID=$(jq -r '.[0].id' <<<"${MATCHING_CLUSTERS}")
+          CLUSTER_STATE=$(jq -r '.[0]."lifecycle-state"' <<<"${MATCHING_CLUSTERS}")
+          if [[ "${CLUSTER_STATE}" != "ACTIVE" ]]; then
+            echo "Cluster solidarytech-oke-prod não está ACTIVE (${CLUSTER_STATE}); nenhum Ingress a remover."
+            exit 0
+          fi
+
+          mkdir -p "${HOME}/.kube"
+          chmod 700 "${HOME}/.kube"
+          oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster create-kubeconfig \
+            --cluster-id "${CLUSTER_ID}" \
+            --file "${HOME}/.kube/config" \
+            --overwrite \
+            --token-version 2.0.0 \
+            --kube-endpoint PUBLIC_ENDPOINT
+          helm uninstall ingress-nginx \
+            --namespace ingress-nginx \
+            --ignore-not-found \
+            --wait \
+            --timeout 10m
+
       - name: Terraform Destroy
         id: destroy
         if: inputs.action == 'destroy'
@@ -181,4 +230,4 @@ jobs:
 
       - name: Limpar chave privada temporária do runner
         if: always()
-        run: rm -f ~/.oci/oci_api_key.pem /tmp/tf_outputs.md
+        run: rm -f ~/.oci/oci_api_key.pem ~/.kube/config /tmp/tf_outputs.md

@@ -20,24 +20,29 @@ spec:
             - -ec
             - |
               export PGPASSWORD="${POSTGRES_PASSWORD}"
-              until pg_isready --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" --dbname=postgres; do
+              until pg_isready --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+                --username="${POSTGRES_USER}" --dbname=postgres; do
                 sleep 5
               done
 
               for database in ngos donations; do
-                exists=$(psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+                exists=$(psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+                  --username="${POSTGRES_USER}" \
                   --dbname=postgres --tuples-only --no-align \
                   --command="SELECT 1 FROM pg_database WHERE datname = '${database}'")
                 if [ "${exists}" != "1" ]; then
-                  psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+                  psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+                    --username="${POSTGRES_USER}" \
                     --dbname=postgres --set=ON_ERROR_STOP=1 \
                     --command="CREATE DATABASE \"${database}\""
                 fi
               done
 
-              psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+              psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+                --username="${POSTGRES_USER}" \
                 --dbname=ngos --set=ON_ERROR_STOP=1 --file=/sql/ngo-init.sql
-              psql --host="${POSTGRES_HOST}" --username="${POSTGRES_USER}" \
+              psql --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+                --username="${POSTGRES_USER}" \
                 --dbname=donations --set=ON_ERROR_STOP=1 --file=/sql/donation-init.sql
           env:
             - name: POSTGRES_HOST
@@ -50,6 +55,11 @@ spec:
                 secretKeyRef:
                   name: solidarytech-db-secret
                   key: POSTGRES_USER
+            - name: POSTGRES_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: solidarytech-db-secret
+                  key: POSTGRES_PORT
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

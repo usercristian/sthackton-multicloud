@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: solidarytech-oci-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/usercristian/togglemaster-multicloud.git
+    targetRevision: master
+    path: k8s/overlays/oci-prod
+    kustomize:
+      buildOptions: "--load-restrictor LoadRestrictionsNone"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: solidarytech
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

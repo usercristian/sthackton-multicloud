@@ -15,13 +15,13 @@ generatorOptions:
   disableNameSuffixHash: true
 images:
   - name: ngo-service
-    newName: sa-saopaulo-1.ocir.io/PLACEHOLDER_NAMESPACE/solidarytech/ngo-service
+    newName: sa-saopaulo-1.ocir.io/grqecn36frj4/solidarytech/ngo-service
     newTag: latest
   - name: donation-service
-    newName: sa-saopaulo-1.ocir.io/PLACEHOLDER_NAMESPACE/solidarytech/donation-service
+    newName: sa-saopaulo-1.ocir.io/grqecn36frj4/solidarytech/donation-service
     newTag: latest
   - name: volunteer-service
-    newName: sa-saopaulo-1.ocir.io/PLACEHOLDER_NAMESPACE/solidarytech/volunteer-service
+    newName: sa-saopaulo-1.ocir.io/grqecn36frj4/solidarytech/volunteer-service
     newTag: latest
 patches:
   - target:
