@@ -14,7 +14,7 @@ on:
           - destroy
 
 concurrency:
-  group: terraform-oci-prod
+  group: oci-infra-lifecycle
   cancel-in-progress: false
 
 jobs:

@@ -14,6 +14,10 @@ output "node_pool_id" {
 }
 
 output "ocir_repositories" {
-  description = "Mapa dos repositórios OCIR criados por microsserviço"
-  value       = { for k, repo in oci_artifacts_container_repository.services : k => repo.display_name }
+  description = "Nomes dos repositórios OCIR mantidos fora do Terraform State"
+  value = {
+    "donation-service"  = "solidarytech/donation-service"
+    "ngo-service"       = "solidarytech/ngo-service"
+    "volunteer-service" = "solidarytech/volunteer-service"
+  }
 }

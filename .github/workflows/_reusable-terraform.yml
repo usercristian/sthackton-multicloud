@@ -145,7 +145,7 @@ jobs:
         with:
           version: v3.16.4
 
-      - name: Remover Load Balancer do NGINX antes do destroy
+      - name: Remover Load Balancer do Ingress antes do destroy
         if: inputs.action == 'destroy'
         run: |
           set -euo pipefail
@@ -182,8 +182,13 @@ jobs:
             --overwrite \
             --token-version 2.0.0 \
             --kube-endpoint PUBLIC_ENDPOINT
+          helm uninstall traefik \
+            -n traefik \
+            --ignore-not-found \
+            --wait \
+            --timeout 10m
           helm uninstall ingress-nginx \
-            --namespace ingress-nginx \
+            -n ingress-nginx \
             --ignore-not-found \
             --wait \
             --timeout 10m

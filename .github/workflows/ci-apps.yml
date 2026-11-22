@@ -22,6 +22,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   ensure-oci-vault:
@@ -154,11 +155,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     concurrency:
-      group: solidarytech-oke-gitops-deploy
+      group: oci-gitops-deploy
       cancel-in-progress: false
     permissions:
       actions: write
-      contents: read
+      contents: write
     needs:
       - detect-changes
       - ensure-oci-vault
@@ -252,7 +253,7 @@ jobs:
               fi
               while IFS= read -r run_id; do
                 if [[ -n "${run_id}" ]]; then
-                  gh run watch "${run_id}"
+                  gh run watch "${run_id}" --exit-status
                 fi
               done <<<"${RUN_IDS}"
             done
@@ -278,24 +279,101 @@ jobs:
               --jq 'map(.databaseId) | max // 0')
             gh workflow run infra-oci-lifecycle.yml --ref master -f action=apply
 
-            APPLY_RUN_ID=""
-            for attempt in {1..30}; do
-              APPLY_RUN_ID=$(gh run list \
+            NEW_RUN_ID=""
+            for attempt in {1..12}; do
+              NEW_RUN_ID=$(gh run list \
                 --workflow infra-oci-lifecycle.yml \
                 --limit 100 \
                 --json databaseId,event,headBranch \
                 --jq "[.[] | select(.event == \"workflow_dispatch\" and .headBranch == \"master\" and .databaseId > ${LATEST_INFRA_RUN_ID})] | max_by(.databaseId).databaseId // empty")
-              if [[ -n "${APPLY_RUN_ID}" ]]; then
+              if [[ -n "${NEW_RUN_ID}" ]]; then
                 break
               fi
-              sleep 2
+              sleep_seconds=$((attempt * 5))
+              if [[ "${sleep_seconds}" -gt 30 ]]; then
+                sleep_seconds=30
+              fi
+              echo "Aguardando propagação da execução apply no GitHub (tentativa ${attempt}/12; ${sleep_seconds}s)."
+              sleep "${sleep_seconds}"
             done
-            if [[ -z "${APPLY_RUN_ID}" ]]; then
+            if [[ -z "${NEW_RUN_ID}" ]]; then
               echo "ERRO: Não foi possível localizar a execução Terraform disparada." >&2
               exit 1
             fi
-            gh run watch "${APPLY_RUN_ID}" --exit-status
+            gh run watch "${NEW_RUN_ID}" --exit-status
+            wait_for_active_infra_runs
+
+            CLUSTERS=$(oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster list \
+              --compartment-id "${OCI_CLI_COMPARTMENT}" \
+              --all \
+              --query 'data')
+            ACTIVE_CLUSTER_ID=$(jq -r \
+              '[.[] | select(.name == "solidarytech-oke-prod" and ."lifecycle-state" == "ACTIVE")][0].id // empty' \
+              <<<"${CLUSTERS}")
+            if [[ -z "${ACTIVE_CLUSTER_ID}" ]]; then
+              echo "ERRO: O cluster solidarytech-oke-prod não ficou ACTIVE após o workflow de apply." >&2
+              exit 1
+            fi
           fi
+
+      - name: Atualizar tags GitOps dos serviços publicados
+        env:
+          UPDATE_DONATION: ${{ needs['donation-service'].result == 'success' }}
+          UPDATE_NGO: ${{ needs['ngo-service'].result == 'success' }}
+          UPDATE_VOLUNTEER: ${{ needs['volunteer-service'].result == 'success' }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          KUSTOMIZATION="k8s/overlays/oci-prod/kustomization.yaml"
+
+          git fetch origin master
+          git checkout -B master origin/master
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          python3 - "${KUSTOMIZATION}" "${SHORT_SHA}" \
+            "${UPDATE_DONATION}" "${UPDATE_NGO}" "${UPDATE_VOLUNTEER}" <<'PY'
+          import sys
+          from pathlib import Path
+
+          manifest = Path(sys.argv[1])
+          image_tag = sys.argv[2]
+          selected = {
+              name
+              for name, should_update in zip(
+                  ("donation-service", "ngo-service", "volunteer-service"),
+                  sys.argv[3:],
+              )
+              if should_update == "true"
+          }
+          lines = manifest.read_text().splitlines(keepends=True)
+          current_image = None
+          updates = {name: 0 for name in selected}
+
+          for index, line in enumerate(lines):
+              if line.startswith("  - name: "):
+                  current_image = line.removeprefix("  - name: ").strip()
+              elif current_image in selected and line.startswith("    newTag: "):
+                  lines[index] = f"    newTag: {image_tag}\n"
+                  updates[current_image] += 1
+                  current_image = None
+
+          invalid = [name for name, count in updates.items() if count != 1]
+          if invalid:
+              raise SystemExit(f"Esperada uma única tag por serviço: {', '.join(invalid)}")
+
+          manifest.write_text("".join(lines))
+          print(f"Serviços com tag atualizada: {', '.join(sorted(selected)) or 'nenhum'}")
+          PY
+
+          if git diff --quiet -- "${KUSTOMIZATION}"; then
+            echo "As tags GitOps já correspondem ao SHA ${SHORT_SHA}; nenhum commit necessário."
+            exit 0
+          fi
+
+          git add -- "${KUSTOMIZATION}"
+          git commit -m "chore(gitops): update image tags to ${SHORT_SHA} [skip ci]"
+          git push origin HEAD:master
 
       - name: Bootstrap GitOps, Secrets e ArgoCD
         env:

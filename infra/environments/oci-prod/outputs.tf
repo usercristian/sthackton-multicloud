@@ -29,7 +29,7 @@ output "oke_cluster_endpoint" {
 }
 
 output "ocir_repositories" {
-  description = "Repositórios OCIR criados para os microsserviços"
+  description = "Nomes dos repositórios OCIR usados pelos microsserviços"
   value       = module.oke.ocir_repositories
 }
 

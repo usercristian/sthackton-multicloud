@@ -146,19 +146,17 @@ oci --auth api_key --region "${OCI_CLI_REGION}" ce cluster create-kubeconfig \
   --token-version 2.0.0 \
   --kube-endpoint PUBLIC_ENDPOINT
 
-echo "Instalando ou atualizando ingress-nginx e ArgoCD..."
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update
+echo "Instalando ou atualizando Traefik e ArgoCD..."
+helm repo add traefik https://traefik.github.io/charts --force-update
 helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm repo update
 
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx \
+helm upgrade --install traefik traefik/traefik \
+  --namespace traefik \
   --create-namespace \
-  --set controller.replicaCount=1 \
-  --set controller.resources.requests.cpu=50m \
-  --set controller.resources.requests.memory=128Mi \
-  --set controller.resources.limits.cpu=250m \
-  --set controller.resources.limits.memory=256Mi \
+  --set deployment.replicas=1 \
+  --set resources.requests.cpu=100m \
+  --set resources.requests.memory=128Mi \
   --wait \
   --timeout 10m
 
