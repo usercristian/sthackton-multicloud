@@ -18,7 +18,7 @@ done
 
 echo "Iniciando preflight de secrets OCI Vault (região: ${OCI_CLI_REGION})..."
 
-VAULTS=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms vault list \
+VAULTS=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms management vault list \
   --compartment-id "${OCI_CLI_COMPARTMENT}" \
   --all \
   --query 'data')
@@ -33,7 +33,7 @@ fi
 
 if [[ "${VAULT_COUNT}" -eq 0 ]]; then
   echo "Vault '${VAULT_NAME}' não encontrado. Criando..."
-  VAULT_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms vault create \
+  VAULT_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms management vault create \
     --compartment-id "${OCI_CLI_COMPARTMENT}" \
     --display-name "${VAULT_NAME}" \
     --vault-type DEFAULT \
@@ -46,7 +46,7 @@ fi
 
 VAULT_STATE=""
 for attempt in {1..120}; do
-  VAULT_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms vault get \
+  VAULT_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" kms management vault get \
     --vault-id "${VAULT_ID}" \
     --query 'data')
   VAULT_STATE=$(jq -r '."lifecycle-state"' <<<"${VAULT_JSON}")
@@ -59,6 +59,12 @@ for attempt in {1..120}; do
   fi
   sleep 10
 done
+
+VAULT_TYPE=$(jq -r '."vault-type"' <<<"${VAULT_JSON}")
+if [[ "${VAULT_TYPE}" != "DEFAULT" ]]; then
+  echo "ERRO: Vault '${VAULT_NAME}' é do tipo '${VAULT_TYPE}', esperado DEFAULT." >&2
+  exit 1
+fi
 
 MANAGEMENT_ENDPOINT=$(jq -r '."management-endpoint"' <<<"${VAULT_JSON}")
 if [[ -z "${MANAGEMENT_ENDPOINT}" || "${MANAGEMENT_ENDPOINT}" == "null" ]]; then
