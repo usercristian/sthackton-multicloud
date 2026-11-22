@@ -18,6 +18,7 @@ jobs:
       OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
       OCI_CLI_COMPARTMENT: ${{ secrets.OCI_COMPARTMENT_OCID }}
       OCI_CLI_REGION: sa-saopaulo-1
+      SUPPRESS_LABEL_WARNING: "True"
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
@@ -133,6 +134,179 @@ jobs:
           } >> "${GITHUB_ENV}"
           echo "Outputs oficiais do OKE e PostgreSQL carregados do Terraform State."
 
+      - name: Liberar temporariamente IP do Runner na Security List (TCP/6443)
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          is_ipv4() {
+            python3 -c 'import ipaddress, sys; ipaddress.IPv4Address(sys.argv[1])' \
+              "$1" >/dev/null 2>&1
+          }
+
+          RUNNER_IP=$(curl -fsSL --max-time 10 https://checkip.amazonaws.com \
+            | tr -d '[:space:]') || RUNNER_IP=""
+          if ! is_ipv4 "${RUNNER_IP}"; then
+            RUNNER_IP=$(curl -fsSL --max-time 10 https://ifconfig.me/ip \
+              | tr -d '[:space:]') || RUNNER_IP=""
+          fi
+          if ! is_ipv4 "${RUNNER_IP}"; then
+            echo "ERRO: Não foi possível obter um IPv4 público válido para o runner." >&2
+            exit 1
+          fi
+          RUNNER_CIDR="${RUNNER_IP}/32"
+
+          SECURITY_LISTS=$(oci network security-list list \
+            --compartment-id "${OCI_CLI_COMPARTMENT}" \
+            --display-name "solidarytech-sl-public-lb" \
+            --lifecycle-state AVAILABLE \
+            --all \
+            --query 'data')
+          MATCHING_SECURITY_LISTS=$(jq -c \
+            '[.[] | select(."display-name" == "solidarytech-sl-public-lb" and ."lifecycle-state" == "AVAILABLE")]' \
+            <<<"${SECURITY_LISTS}")
+          SECURITY_LIST_COUNT=$(jq 'length' <<<"${MATCHING_SECURITY_LISTS}")
+          if [[ "${SECURITY_LIST_COUNT}" -ne 1 ]]; then
+            echo "ERRO: Esperada exatamente uma Security List AVAILABLE 'solidarytech-sl-public-lb'; encontradas: ${SECURITY_LIST_COUNT}." >&2
+            exit 1
+          fi
+          SECURITY_LIST_ID=$(jq -r '.[0].id' <<<"${MATCHING_SECURITY_LISTS}")
+
+          RULES_HELPER="${RUNNER_TEMP}/solidarytech-security-list-rules.py"
+          cat > "${RULES_HELPER}" <<'PY'
+          # OCI CLI returns kebab-case fields; update requests use camelCase.
+          import json
+          import sys
+          from pathlib import Path
+
+          def is_runner_rule(rule, runner_cidr):
+              tcp_options = rule.get("tcp-options") or {}
+              destination = tcp_options.get("destination-port-range") or {}
+              return (
+                  rule.get("source") == runner_cidr
+                  and str(rule.get("protocol")) == "6"
+                  and rule.get("source-type", "CIDR_BLOCK") == "CIDR_BLOCK"
+                  and not rule.get("is-stateless", False)
+                  and destination.get("min") == 6443
+                  and destination.get("max") == 6443
+              )
+
+          def convert_port_options(options):
+              if not isinstance(options, dict):
+                  return None
+              converted = {}
+              for old_name, new_name in (
+                  ("destination-port-range", "destinationPortRange"),
+                  ("source-port-range", "sourcePortRange"),
+              ):
+                  port_range = options.get(old_name)
+                  if isinstance(port_range, dict):
+                      converted[new_name] = {
+                          key: port_range[key]
+                          for key in ("min", "max")
+                          if port_range.get(key) is not None
+                      }
+              return converted or None
+
+          def convert_rule(rule):
+              converted = {
+                  "isStateless": rule.get("is-stateless", False),
+                  "protocol": rule["protocol"],
+              }
+              for old_name, new_name in (
+                  ("description", "description"),
+                  ("source", "source"),
+                  ("source-type", "sourceType"),
+              ):
+                  if rule.get(old_name) is not None:
+                      converted[new_name] = rule[old_name]
+              icmp_options = rule.get("icmp-options")
+              if isinstance(icmp_options, dict):
+                  converted["icmpOptions"] = {
+                      key: icmp_options[key]
+                      for key in ("type", "code")
+                      if icmp_options.get(key) is not None
+                  }
+              for old_name, new_name in (
+                  ("tcp-options", "tcpOptions"),
+                  ("udp-options", "udpOptions"),
+              ):
+                  options = convert_port_options(rule.get(old_name))
+                  if options:
+                      converted[new_name] = options
+              return converted
+
+          mode, source_file, update_file, runner_cidr, *extra = sys.argv[1:]
+          rules = json.loads(Path(source_file).read_text())
+          if rules is None:
+              rules = []
+          if not isinstance(rules, list):
+              raise SystemExit("Ingress rules OCI CLI não retornou uma lista.")
+
+          if mode == "add":
+              rule_exists = any(is_runner_rule(rule, runner_cidr) for rule in rules)
+              update_rules = [convert_rule(rule) for rule in rules]
+              if not rule_exists:
+                  update_rules.append({
+                      "isStateless": False,
+                      "protocol": "6",
+                      "source": runner_cidr,
+                      "sourceType": "CIDR_BLOCK",
+                      "tcpOptions": {
+                          "destinationPortRange": {"min": 6443, "max": 6443}
+                      },
+                  })
+              Path(update_file).write_text(json.dumps(update_rules))
+              print("false" if rule_exists else "true")
+          elif mode == "remove":
+              rule_added = extra[0] == "true"
+              matching_rules = [
+                  rule for rule in rules if is_runner_rule(rule, runner_cidr)
+              ]
+              if rule_added:
+                  rules = [
+                      rule for rule in rules
+                      if not is_runner_rule(rule, runner_cidr)
+                  ]
+              Path(update_file).write_text(
+                  json.dumps([convert_rule(rule) for rule in rules])
+              )
+              print(len(matching_rules) if rule_added else 0)
+          else:
+              raise SystemExit(f"Modo de operação inválido: {mode}")
+          PY
+          chmod 600 "${RULES_HELPER}"
+
+          CURRENT_RULES=$(oci network security-list get \
+            --security-list-id "${SECURITY_LIST_ID}" \
+            --query 'data."ingress-security-rules"')
+          RULES_SOURCE_FILE="${RUNNER_TEMP}/solidarytech-ingress-rules-source.json"
+          RULES_UPDATE_FILE="${RUNNER_TEMP}/solidarytech-ingress-rules-update.json"
+          printf '%s\n' "${CURRENT_RULES}" > "${RULES_SOURCE_FILE}"
+
+          RUNNER_RULE_ADDED=$(python3 "${RULES_HELPER}" add \
+            "${RULES_SOURCE_FILE}" "${RULES_UPDATE_FILE}" "${RUNNER_CIDR}")
+
+          {
+            echo "SECURITY_LIST_ID=${SECURITY_LIST_ID}"
+            echo "RUNNER_CIDR=${RUNNER_CIDR}"
+            echo "RUNNER_RULE_ADDED=${RUNNER_RULE_ADDED}"
+          } >> "${GITHUB_ENV}"
+
+          if [[ "${RUNNER_RULE_ADDED}" == "true" ]]; then
+            oci network security-list update \
+              --security-list-id "${SECURITY_LIST_ID}" \
+              --ingress-security-rules "file://${RULES_UPDATE_FILE}" \
+              --force \
+              --wait-for-state AVAILABLE \
+              --max-wait-seconds 180 \
+              >/dev/null
+            echo "Acesso temporário do runner à API Kubernetes liberado."
+          else
+            echo "A regra equivalente já existia; nenhuma alteração foi aplicada."
+          fi
+
       - name: Executar bootstrap GitOps
         id: bootstrap
         run: |
@@ -189,6 +363,74 @@ jobs:
             echo "| Application ArgoCD | \`${ARGOCD_APPLICATION}\` |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Remover credenciais temporárias
+      - name: Revogar acesso temporario do Runner na Security List (TCP/6443)
         if: always()
-        run: rm -f "${HOME}/.oci/config" "${HOME}/.oci/oci_api_key.pem" "${HOME}/.kube/config"
+        run: |
+          set -euo pipefail
+          set +x
+
+          cleanup_local_credentials() {
+            rm -f \
+              "${HOME}/.oci/config" \
+              "${HOME}/.oci/oci_api_key.pem" \
+              "${HOME}/.kube/config" \
+              "${RUNNER_TEMP}/solidarytech-security-list-rules.py" \
+              "${RUNNER_TEMP}/solidarytech-ingress-rules-source.json" \
+              "${RUNNER_TEMP}/solidarytech-ingress-rules-current.json" \
+              "${RUNNER_TEMP}/solidarytech-ingress-rules-update.json"
+          }
+          trap cleanup_local_credentials EXIT
+
+          SECURITY_LIST_ID="${SECURITY_LIST_ID:-}"
+          RUNNER_CIDR="${RUNNER_CIDR:-}"
+          if [[ -z "${SECURITY_LIST_ID}" || -z "${RUNNER_CIDR}" ]]; then
+            echo "Nenhuma regra temporária foi preparada para revogação."
+            exit 0
+          fi
+
+          CURRENT_RULES_FILE="${RUNNER_TEMP}/solidarytech-ingress-rules-current.json"
+          RULES_UPDATE_FILE="${RUNNER_TEMP}/solidarytech-ingress-rules-update.json"
+          REVOKED=0
+          for attempt in 1 2 3; do
+            if ! CURRENT_RULES=$(oci network security-list get \
+              --security-list-id "${SECURITY_LIST_ID}" \
+              --query 'data."ingress-security-rules"'); then
+              echo "Falha ao ler regras para revogação (tentativa ${attempt}/3)." >&2
+              sleep $((attempt * 5))
+              continue
+            fi
+            printf '%s\n' "${CURRENT_RULES}" > "${CURRENT_RULES_FILE}"
+
+            REMOVED_COUNT=$(python3 \
+              "${RUNNER_TEMP}/solidarytech-security-list-rules.py" \
+              remove \
+              "${CURRENT_RULES_FILE}" \
+              "${RULES_UPDATE_FILE}" \
+              "${RUNNER_CIDR}" \
+              "${RUNNER_RULE_ADDED:-false}")
+
+            if [[ "${REMOVED_COUNT}" -eq 0 ]]; then
+              echo "A regra temporária já está ausente ou não foi criada; estado preservado."
+              REVOKED=1
+              break
+            fi
+
+            if oci network security-list update \
+              --security-list-id "${SECURITY_LIST_ID}" \
+              --ingress-security-rules "file://${RULES_UPDATE_FILE}" \
+              --force \
+              --wait-for-state AVAILABLE \
+              --max-wait-seconds 180 \
+              >/dev/null; then
+              echo "A regra temporária do runner foi revogada."
+              REVOKED=1
+              break
+            fi
+            echo "Falha ao atualizar a Security List para revogar o acesso (tentativa ${attempt}/3)." >&2
+            sleep $((attempt * 5))
+          done
+
+          if [[ "${REVOKED}" -ne 1 ]]; then
+            echo "ERRO: Não foi possível confirmar a revogação do acesso temporário após três tentativas." >&2
+            exit 1
+          fi
