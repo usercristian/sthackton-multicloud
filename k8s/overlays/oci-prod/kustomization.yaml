@@ -16,20 +16,10 @@ generatorOptions:
 images:
   - name: gru.ocir.io/grqecn36frj4/solidarytech/ngo-service
     newName: gru.ocir.io/grqecn36frj4/solidarytech/ngo-service
-    newTag: 72cb69a91e9017a3bb1e292d3af19893ed7a0172
+    newTag: 00321718d056a91d15303625e1acf810f3a9c1e0
   - name: gru.ocir.io/grqecn36frj4/solidarytech/donation-service
     newName: gru.ocir.io/grqecn36frj4/solidarytech/donation-service
-    newTag: 72cb69a91e9017a3bb1e292d3af19893ed7a0172
+    newTag: 32d4b66cbdb62345a3a21699abeef006f5a24125
   - name: gru.ocir.io/grqecn36frj4/solidarytech/volunteer-service
     newName: gru.ocir.io/grqecn36frj4/solidarytech/volunteer-service
-    newTag: 72cb69a91e9017a3bb1e292d3af19893ed7a0172
-patches:
-  - target:
-      group: apps
-      version: v1
-      kind: Deployment
-    patch: |-
-      - op: add
-        path: /spec/template/spec/imagePullSecrets
-        value:
-          - name: ocir-secret
+    newTag: 00321718d056a91d15303625e1acf810f3a9c1e0

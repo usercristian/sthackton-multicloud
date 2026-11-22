@@ -14,6 +14,8 @@ spec:
       labels:
         app: donation-service
     spec:
+      imagePullSecrets:
+        - name: ocir-secret
       containers:
         - name: donation-service
           image: gru.ocir.io/grqecn36frj4/solidarytech/donation-service:latest

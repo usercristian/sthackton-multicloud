@@ -14,6 +14,8 @@ spec:
       labels:
         app: ngo-service
     spec:
+      imagePullSecrets:
+        - name: ocir-secret
       containers:
         - name: ngo-service
           image: gru.ocir.io/grqecn36frj4/solidarytech/ngo-service:latest

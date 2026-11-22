@@ -13,7 +13,6 @@ VAULT_NAME="solidarytech-vault-prod"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
 DB_SECRET_NAME="solidarytech-postgres-password"
 ARGOCD_ADMIN_PASSWORD_SECRET_NAME="solidarytech-argocd-admin-password"
-REGISTRY="gru.ocir.io"
 POSTGRES_USER="${POSTGRES_ADMIN_USERNAME}"
 POSTGRES_PORT="5432"
 
@@ -203,11 +202,14 @@ helm upgrade --install argocd argo/argo-cd \
 kubectl create namespace solidarytech --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret docker-registry ocir-secret \
   --namespace solidarytech \
-  --docker-server="${REGISTRY}" \
+  --docker-server="gru.ocir.io" \
   --docker-username="${TENANCY_NAMESPACE}/${OCI_USERNAME}" \
   --docker-password="${OCIR_TOKEN}" \
   --dry-run=client \
   -o yaml | kubectl apply -f -
+kubectl -n solidarytech patch serviceaccount default \
+  -p '{"imagePullSecrets":[{"name":"ocir-secret"}]}' \
+  >/dev/null
 kubectl create secret generic solidarytech-db-secret \
   --namespace solidarytech \
   --from-literal="POSTGRES_HOST=${DB_HOST}" \
