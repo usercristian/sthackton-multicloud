@@ -6,6 +6,7 @@ metadata:
     app: ngo-service
 spec:
   replicas: 1
+  revisionHistoryLimit: 0
   selector:
     matchLabels:
       app: ngo-service
