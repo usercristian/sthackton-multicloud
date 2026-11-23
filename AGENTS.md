@@ -1,6 +1,6 @@
 # SOLIDARYTECH — ENGINEERING GOVERNANCE & AI DEVELOPMENT GUIDELINES
 
-Version: 1.1
+Version: 1.2
 Document Type: Repository-wide AI Instructions
 Governance Level: Strict
 Primary Objective: Educational Software Engineering
@@ -117,11 +117,19 @@ Approved Architectural Baseline (ACP-001 Rev. 2):
 - Secondary / Hybrid & DR provider: Amazon Web Services (AWS), hosting managed messaging (SQS with DLQ) and NoSQL persistence (DynamoDB) to preserve the original application codebase without refactoring, plus modularized Warm Standby infrastructure (`enable_warm_standby`) for Disaster Recovery.
 - Ephemeral Infrastructure Strategy (FinOps): Primary OCI resources are provisioned on demand via GitHub Actions (`terraform apply`) and destroyed during idle periods (`terraform destroy`) using a persistent remote state backend.
 
+Approved Observability, Telemetry, and Active Response Baseline (ACP-002):
+Implementation must follow this incremental order:
+1. **Open-source foundation:** Deploy Prometheus, Loki, and Grafana through ArgoCD GitOps in the `observability` namespace. Set resource limits and FinOps-conscious retention for ARM64 `VM.Standard.A2.Flex` nodes. Manage the Grafana admin password idempotently in OCI Vault as `solidarytech-grafana-admin-password`. Expose Grafana through Traefik at `/grafana` and provide a custom dashboard for cluster health, HTTP request rate, and real-time logs.
+2. **OpenTelemetry pipeline:** Deploy the OpenTelemetry Collector (`OTel Collector`) as the central OTLP telemetry hub, receiving gRPC on `4317` and HTTP on `4318`. Instrument `ngo-service`, `donation-service`, and `volunteer-service` with OpenTelemetry, routing metrics to Prometheus and logs to Loki. Pre-structure the Datadog exporter but leave it inactive until Step 4.
+3. **Alerting and active response:** Configure intelligent alerts for HTTP 5xx errors, Slack ChatOps notifications, and Self-Healing through GitHub Actions using `kubectl rollout restart`. The workflow must temporarily allow TCP/6443 in the OCI Security List and revoke that access after the operation.
+4. **Commercial APM and incident management:** Activate the Datadog trial for APM, Distributed Tracing, and Service Map, and integrate incident management with Jira Service Management, replacing OpsGenie. Store `DD_API_KEY` and other tokens in OCI Vault, then enable the Datadog exporter in the OTel Collector.
+
 ### 5.1 Cloud and IaC principles
 - Isolate Terraform modules and state backends by cloud provider (`infra/modules/oci` and `infra/modules/aws`).
 - Enforce FinOps tags across all cloud resources (`Project = "Solidary Tech"`, `Environment = "Production"`, `CostCenter = "NGO-Core"`).
 - Never execute destructive infrastructure operations (`terraform apply`, `terraform destroy`) automatically without explicit human trigger/approval.
 - Never expose credentials, tokens, private keys, or sensitive configuration in source code or documentation.
+- Protect commercial trials: before Step 4 of ACP-002, do not enable paid external exporters or require commercial API keys. Keep the OTel pipeline functional with local open-source backends until controlled activation through OCI Vault.
 - Use the native OCI Terraform backend (`backend "oci"`, Terraform `>= 1.12.0`) for primary infrastructure state, backed by a deterministic, private, versioned Object Storage bucket (`solidarytech-tfstate-prod`) validated prior to `terraform init` via `infra/scripts/oci-state-preflight.sh`.
 - Serialize infrastructure lifecycle executions via GitHub Actions `concurrency` groups (`cancel-in-progress: false`) to prevent concurrent state corruption.
 - Generate structured Markdown execution summaries (`$GITHUB_STEP_SUMMARY`) in infrastructure and delivery workflows, reporting step outcomes, failure points, and provisioned outputs.

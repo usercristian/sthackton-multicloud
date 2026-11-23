@@ -1,4 +1,4 @@
-# Ecossistema Cloud-Native, SRE, FinOps e Disaster Recovery
+# sthackton-multicloud — Ecossistema Cloud-Native, SRE, FinOps e Disaster Recovery
 
 ## 1. Visão Geral e Contexto Acadêmico
 
@@ -144,9 +144,13 @@ Os três fluxos têm responsabilidades separadas: `infra-oci-lifecycle.yml` gere
 ### Planejado, ainda não implementado aqui
 
 - Camada Terraform da AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby.
-- Addon Datadog Agent.
+- Fase de Observabilidade & SRE (ACP-002), ainda não implementada:
+  1. Prometheus, Loki e Grafana no namespace `observability`, via ArgoCD, com Grafana em `/grafana` pelo Traefik e senha administrada no OCI Vault.
+  2. OpenTelemetry Collector para OTLP e instrumentação dos três microsserviços.
+  3. Alertas HTTP 5xx, notificações Slack e Self-Healing via GitHub Actions.
+  4. Trial do Datadog APM e Jira Service Management, com chaves e tokens gerenciados no OCI Vault.
 - Rotação contínua dos Secrets sem nova execução do bootstrap.
 - Docker Compose e configuração de ambiente de desenvolvimento local reproduzível.
 - Testes automatizados funcionais dos microsserviços.
-- Dashboards de observabilidade, SLIs/SLOs, APM/AIOps e validação de Disaster Recovery.
+- SLIs/SLOs, AIOps e validação de Disaster Recovery.
 

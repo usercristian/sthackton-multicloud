@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/usercristian/togglemaster-multicloud.git
+    repoURL: https://github.com/usercristian/sthackton-multicloud.git
     targetRevision: master
     path: k8s/overlays/oci-prod
   destination:
