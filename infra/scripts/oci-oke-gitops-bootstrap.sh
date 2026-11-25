@@ -13,13 +13,14 @@ VAULT_NAME="solidarytech-vault-prod"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
 DB_SECRET_NAME="solidarytech-postgres-password"
 ARGOCD_ADMIN_PASSWORD_SECRET_NAME="solidarytech-argocd-admin-password"
+GRAFANA_ADMIN_PASSWORD_SECRET_NAME="solidarytech-grafana-admin-password"
 POSTGRES_USER="${POSTGRES_ADMIN_USERNAME}"
 POSTGRES_PORT="5432"
 
 cleanup() {
   unset OCIR_TOKEN DB_PASSWORD
   unset DB_PASSWORD_URLENCODED NGO_DATABASE_URL DONATION_DATABASE_URL
-  unset ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_PASSWORD_HASH
+  unset ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD
   unset EXISTING_ADMIN_PASSWORD_HASH EXISTING_ADMIN_PASSWORD_HASH_BASE64
   unset ARGOCD_SECRET_JSON
   if [[ -n "${ARGOCD_SECRET_PATCH_FILE:-}" ]]; then
@@ -163,11 +164,18 @@ helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm repo update
 
 helm upgrade --install traefik traefik/traefik \
+  --version 43.0.0 \
   --namespace traefik \
   --create-namespace \
   --set deployment.replicas=1 \
   --set resources.requests.cpu=100m \
   --set resources.requests.memory=128Mi \
+  --set metrics.prometheus.entryPoint=metrics \
+  --set metrics.prometheus.addEntryPointsLabels=true \
+  --set ports.metrics.enabled=true \
+  --set ports.metrics.port=9100 \
+  --set metrics.prometheus.service.enabled=true \
+  --set metrics.prometheus.serviceMonitor.enabled=false \
   --wait \
   --timeout 10m
 
@@ -317,6 +325,33 @@ unset ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_PASSWORD_HASH
 unset EXISTING_ADMIN_PASSWORD_HASH EXISTING_ADMIN_PASSWORD_HASH_BASE64
 unset ARGOCD_SECRET_JSON
 
+kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+GRAFANA_ADMIN_PASSWORD=$(get_secret_value "${GRAFANA_ADMIN_PASSWORD_SECRET_NAME}")
+if [[ -z "${GRAFANA_ADMIN_PASSWORD}" ]]; then
+  echo "ERRO: A senha administrativa do Grafana retornada pelo Vault está vazia." >&2
+  exit 1
+fi
+
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" python3 - <<'PY' | kubectl apply -f - >/dev/null
+import json
+import os
+
+print(json.dumps({
+    "apiVersion": "v1",
+    "kind": "Secret",
+    "metadata": {
+        "name": "grafana-admin-secret",
+        "namespace": "observability",
+    },
+    "type": "Opaque",
+    "stringData": {
+        "admin-user": "admin",
+        "admin-password": os.environ["GRAFANA_ADMIN_PASSWORD"],
+    },
+}))
+PY
+unset GRAFANA_ADMIN_PASSWORD
+
 kubectl apply -f - >/dev/null <<'YAML'
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -338,5 +373,6 @@ spec:
 YAML
 
 kubectl apply -f k8s/argocd/solidarytech-oci-prod.yaml
+kubectl apply -f k8s/argocd/solidarytech-observability-oci.yaml
 
 echo "Bootstrap GitOps concluído."

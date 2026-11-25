@@ -1,0 +1,107 @@
+controller:
+  type: daemonset
+  nodeSelector:
+    kubernetes.io/arch: arm64
+    kubernetes.io/os: linux
+  volumes:
+    extra:
+      - name: pod-logs
+        hostPath:
+          path: /var/log/pods
+          type: Directory
+      - name: alloy-positions
+        emptyDir:
+          sizeLimit: 512Mi
+
+alloy:
+  enableReporting: false
+  storagePath: /tmp/alloy
+  configMap:
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+
+        namespaces {
+          names = ["solidarytech", "traefik", "argocd"]
+        }
+      }
+
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action        = "keep"
+          regex         = "solidarytech|traefik|argocd"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+
+        rule {
+          source_labels = [
+            "__meta_kubernetes_namespace",
+            "__meta_kubernetes_pod_name",
+            "__meta_kubernetes_pod_uid",
+            "__meta_kubernetes_pod_container_name",
+          ]
+          separator     = ";"
+          regex         = "([^;]+);([^;]+);([^;]+);([^;]+)"
+          target_label  = "__path__"
+          replacement   = "/var/log/pods/*$1_$2_$3/$4/*.log"
+        }
+      }
+
+      loki.source.file "pod_logs" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      loki.process "pod_logs" {
+        stage.cri {}
+        forward_to = [loki.write.local.receiver]
+      }
+
+      loki.write "local" {
+        endpoint {
+          url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+  mounts:
+    extra:
+      - name: pod-logs
+        mountPath: /var/log/pods
+        readOnly: true
+      - name: alloy-positions
+        mountPath: /tmp/alloy
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: false
+    runAsUser: 0
+    runAsGroup: 0
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+service:
+  enabled: false

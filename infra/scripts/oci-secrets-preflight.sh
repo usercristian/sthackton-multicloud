@@ -11,8 +11,9 @@ KEY_NAME="solidarytech-master-key"
 SECRET_NAME="solidarytech-postgres-password"
 OCIR_SECRET_NAME="solidarytech-ocir-token"
 ARGOCD_ADMIN_SECRET_NAME="solidarytech-argocd-admin-password"
+GRAFANA_ADMIN_SECRET_NAME="solidarytech-grafana-admin-password"
 FINOPS_TAGS='{"Project":"Solidary Tech","Environment":"Production","CostCenter":"NGO-Core","ManagedBy":"CI-Preflight"}'
-trap 'unset GENERATED_PASSWORD SECRET_CONTENT_BASE64 GENERATED_OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64 GENERATED_ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_SECRET_CONTENT_BASE64' EXIT
+trap 'unset GENERATED_PASSWORD SECRET_CONTENT_BASE64 GENERATED_OCIR_TOKEN OCIR_SECRET_CONTENT_BASE64 GENERATED_ARGOCD_ADMIN_PASSWORD ARGOCD_ADMIN_SECRET_CONTENT_BASE64 GENERATED_GRAFANA_ADMIN_PASSWORD GRAFANA_ADMIN_SECRET_CONTENT_BASE64' EXIT
 
 for command in oci jq openssl base64 tr cut; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -309,10 +310,73 @@ done
 
 echo "Secret '${ARGOCD_ADMIN_SECRET_NAME}' ativo; valor preservado."
 
+GRAFANA_ADMIN_SECRETS=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret list \
+  --compartment-id "${OCI_CLI_COMPARTMENT}" \
+  --vault-id "${VAULT_ID}" \
+  --name "${GRAFANA_ADMIN_SECRET_NAME}" \
+  --all \
+  --query 'data')
+MATCHING_GRAFANA_ADMIN_SECRETS=$(jq -c --arg name "${GRAFANA_ADMIN_SECRET_NAME}" \
+  '[.[] | select(."secret-name" == $name)]' <<<"${GRAFANA_ADMIN_SECRETS}")
+GRAFANA_ADMIN_SECRET_COUNT=$(jq 'length' <<<"${MATCHING_GRAFANA_ADMIN_SECRETS}")
+
+if [[ "${GRAFANA_ADMIN_SECRET_COUNT}" -gt 1 ]]; then
+  echo "ERRO: Mais de um secret '${GRAFANA_ADMIN_SECRET_NAME}' foi encontrado no Vault." >&2
+  exit 1
+fi
+
+if [[ "${GRAFANA_ADMIN_SECRET_COUNT}" -eq 0 ]]; then
+  echo "Secret '${GRAFANA_ADMIN_SECRET_NAME}' não encontrado. Criando senha persistente..."
+  GENERATED_GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 48 \
+    | tr -dc 'A-Za-z0-9' \
+    | cut -c1-20)
+  if [[ "${#GENERATED_GRAFANA_ADMIN_PASSWORD}" -ne 20 ]]; then
+    echo "ERRO: Não foi possível gerar uma senha alfanumérica de 20 caracteres para o Grafana." >&2
+    exit 1
+  fi
+
+  GRAFANA_ADMIN_SECRET_CONTENT_BASE64=$(printf '%s' "${GENERATED_GRAFANA_ADMIN_PASSWORD}" | base64 -w 0)
+  GRAFANA_ADMIN_SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret create-base64 \
+    --compartment-id "${OCI_CLI_COMPARTMENT}" \
+    --vault-id "${VAULT_ID}" \
+    --key-id "${KEY_ID}" \
+    --secret-name "${GRAFANA_ADMIN_SECRET_NAME}" \
+    --secret-content-content "${GRAFANA_ADMIN_SECRET_CONTENT_BASE64}" \
+    --secret-content-name initial \
+    --secret-content-stage CURRENT \
+    --freeform-tags "${FINOPS_TAGS}" \
+    --query 'data')
+  GRAFANA_ADMIN_SECRET_ID=$(jq -r '.id' <<<"${GRAFANA_ADMIN_SECRET_JSON}")
+  unset GENERATED_GRAFANA_ADMIN_PASSWORD GRAFANA_ADMIN_SECRET_CONTENT_BASE64
+else
+  GRAFANA_ADMIN_SECRET_ID=$(jq -r '.[0].id' <<<"${MATCHING_GRAFANA_ADMIN_SECRETS}")
+fi
+
+GRAFANA_ADMIN_SECRET_STATE=""
+for attempt in {1..120}; do
+  GRAFANA_ADMIN_SECRET_JSON=$(oci --auth api_key --region "${OCI_CLI_REGION}" vault secret get \
+    --secret-id "${GRAFANA_ADMIN_SECRET_ID}" \
+    --query 'data')
+  GRAFANA_ADMIN_SECRET_STATE=$(jq -r '."lifecycle-state"' <<<"${GRAFANA_ADMIN_SECRET_JSON}")
+  if [[ "${GRAFANA_ADMIN_SECRET_STATE}" == "ACTIVE" ]]; then
+    break
+  fi
+  if [[ "${GRAFANA_ADMIN_SECRET_STATE}" == "FAILED" ||
+    "${GRAFANA_ADMIN_SECRET_STATE}" == "DELETED" ||
+    "${attempt}" -eq 120 ]]; then
+    echo "ERRO: Secret '${GRAFANA_ADMIN_SECRET_NAME}' não atingiu ACTIVE (estado: ${GRAFANA_ADMIN_SECRET_STATE})." >&2
+    exit 1
+  fi
+  sleep 10
+done
+
+echo "Secret '${GRAFANA_ADMIN_SECRET_NAME}' ativo; valor preservado."
+
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
     echo "vault_id=${VAULT_ID}"
     echo "secret_id=${SECRET_ID}"
     echo "ocir_secret_id=${OCIR_SECRET_ID}"
+    echo "grafana_admin_secret_id=${GRAFANA_ADMIN_SECRET_ID}"
   } >>"${GITHUB_OUTPUT}"
 fi

@@ -46,6 +46,18 @@ variable "oke_node_count" {
   default     = 1
 }
 
+variable "oke_node_ocpus" {
+  description = "Quantidade de OCPUs por Worker Node do ambiente OCI de produção"
+  type        = number
+  default     = 2
+}
+
+variable "oke_node_memory_in_gbs" {
+  description = "Memória RAM em GB por Worker Node do ambiente OCI de produção"
+  type        = number
+  default     = 12
+}
+
 variable "oke_fault_domains" {
   description = "Fault Domains permitidos para alocação dos Worker Nodes"
   type        = list(string)

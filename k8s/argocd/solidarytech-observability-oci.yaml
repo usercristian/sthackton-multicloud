@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: solidarytech-observability-oci
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/usercristian/sthackton-multicloud.git
+      targetRevision: master
+      path: k8s/observability
+      ref: observability-values
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 93.11.0
+      helm:
+        releaseName: kube-prometheus-stack
+        valueFiles:
+          - $observability-values/k8s/observability/kube-prometheus-stack-values.yaml
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki
+      targetRevision: 7.7.0
+      helm:
+        releaseName: loki
+        valueFiles:
+          - $observability-values/k8s/observability/loki-values.yaml
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: alloy
+      targetRevision: 1.16.0
+      helm:
+        releaseName: alloy
+        valueFiles:
+          - $observability-values/k8s/observability/alloy-values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

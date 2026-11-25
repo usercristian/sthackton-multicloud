@@ -134,6 +134,7 @@ Os três fluxos têm responsabilidades separadas: `infra-oci-lifecycle.yml` gere
 - Application ArgoCD em `k8s/argocd/solidarytech-oci-prod.yaml` e bootstrap via Helm para ArgoCD e Traefik, com sincronização idempotente dos Secrets do OCI Vault para o namespace `solidarytech` durante cada execução.
 - Job `update-gitops-manifests` no `ci-apps.yml` para atualizar apenas os serviços publicados com tags SHA completo e registrar a mudança por commit em `master` com `[skip ci]`; o CI de aplicações não acessa o cluster.
 - Workflow manual `gitops-oke-bootstrap.yml` e bootstrap por outputs oficiais do Terraform; o comportamento em ambiente OCI/OKE não foi executado nesta validação local.
+- Passo 1 de Observabilidade & SRE (ACP-002) presente no repositório, ainda não implantado no OKE: o ambiente `oci-prod` configura um Node Pool ARM64 `VM.Standard.A2.Flex` com 1 nó, 2 OCPUs, 12 GB de RAM e boot volume de 50 GB. A Application `k8s/argocd/solidarytech-observability-oci.yaml` gerencia `kube-prometheus-stack` `93.11.0`, Loki `7.7.0` em modo SingleBinary e Alloy `1.16.0`, com versões fixadas e sem PVCs. O Prometheus retém 2 dias e usa `emptyDir` de 4 GiB; o Loki retém 48 horas e usa `emptyDir` de 4 GiB; Grafana usa dados efêmeros limitados a 1 GiB e Alloy guarda posições em `emptyDir` de 512 MiB. A senha do Grafana é criada idempotentemente no OCI Vault e sincronizada para o Secret Kubernetes `grafana-admin-secret`. Traefik `43.0.0` expõe métricas na porta 9100, descobertas por `ServiceMonitor`; Grafana é publicado em `/grafana`. O dashboard `SolidaryTech - Observability Overview` cobre saúde e consumo do cluster/serviços, tráfego e erros 5xx do Traefik e logs de `solidarytech`.
 - Preflight automatizado de estado remoto (`infra/scripts/oci-state-preflight.sh`) com bucket `solidarytech-tfstate-prod` validado na OCI.
 - Bootstrap idempotente e persistente do OCI Vault, Master Key, segredo de senha PostgreSQL e Auth Token OCIR (`infra/scripts/oci-secrets-preflight.sh`), executado pelo workflow de infraestrutura; o CI de aplicações apenas consome o token existente para publicar imagens.
 - Módulos OCI de rede (`infra/modules/oci/network`) e Kubernetes/Registry (`infra/modules/oci/oke`), política IAM de serviço (`iam.tf`) e composição `infra/environments/oci-prod` validados via `terraform apply` e `terraform destroy` no GitHub Actions.
@@ -144,8 +145,7 @@ Os três fluxos têm responsabilidades separadas: `infra-oci-lifecycle.yml` gere
 ### Planejado, ainda não implementado aqui
 
 - Camada Terraform da AWS (`infra/modules/aws` e `infra/environments/aws-dr`) para SQS/DLQ, DynamoDB e Warm Standby.
-- Fase de Observabilidade & SRE (ACP-002), ainda não implementada:
-  1. Prometheus, Loki e Grafana no namespace `observability`, via ArgoCD, com Grafana em `/grafana` pelo Traefik e senha administrada no OCI Vault.
+- Observabilidade & SRE (ACP-002), passos seguintes ainda planejados:
   2. OpenTelemetry Collector para OTLP e instrumentação dos três microsserviços.
   3. Alertas HTTP 5xx, notificações Slack e Self-Healing via GitHub Actions.
   4. Trial do Datadog APM e Jira Service Management, com chaves e tokens gerenciados no OCI Vault.

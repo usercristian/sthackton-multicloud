@@ -134,7 +134,7 @@ jobs:
           } >> "${GITHUB_ENV}"
           echo "Outputs oficiais do OKE e PostgreSQL carregados do Terraform State."
 
-      - name: Garantir senha persistente do ArgoCD no OCI Vault
+      - name: Garantir senhas persistentes do ArgoCD e Grafana no OCI Vault
         id: vault-preflight
         run: |
           chmod +x infra/scripts/oci-secrets-preflight.sh && ./infra/scripts/oci-secrets-preflight.sh
@@ -371,6 +371,7 @@ jobs:
           TRAEFIK_ENDPOINTS="Indisponível"
           TRAEFIK_ENDPOINT=""
           ARGOCD_APPLICATION="Indisponível"
+          OBSERVABILITY_APPLICATION="Indisponível"
           if [[ -f "${HOME}/.kube/config" ]]; then
             if TRAEFIK_SERVICE=$(kubectl -n traefik get service traefik -o json); then
               TRAEFIK_ENDPOINTS=$(jq -r \
@@ -389,6 +390,12 @@ jobs:
               HEALTH_STATUS=$(jq -r '.status.health.status // "Unknown"' <<<"${APPLICATION}")
               ARGOCD_APPLICATION="sync=${SYNC_STATUS}; health=${HEALTH_STATUS}"
             fi
+
+            if APPLICATION=$(kubectl -n argocd get application.argoproj.io solidarytech-observability-oci -o json); then
+              SYNC_STATUS=$(jq -r '.status.sync.status // "Unknown"' <<<"${APPLICATION}")
+              HEALTH_STATUS=$(jq -r '.status.health.status // "Unknown"' <<<"${APPLICATION}")
+              OBSERVABILITY_APPLICATION="sync=${SYNC_STATUS}; health=${HEALTH_STATUS}"
+            fi
           fi
 
           {
@@ -401,10 +408,13 @@ jobs:
             echo "| Cluster OKE | \`${CLUSTER_STATUS}\` |"
             echo "| Load Balancer Traefik | \`${TRAEFIK_ENDPOINTS}\` |"
             echo "| Application ArgoCD | \`${ARGOCD_APPLICATION}\` |"
+            echo "| Application Observabilidade | \`${OBSERVABILITY_APPLICATION}\` |"
             echo ""
             echo "## Acesso web e validação"
             if [[ -n "${TRAEFIK_ENDPOINT}" ]]; then
               printf -- '- Painel ArgoCD: [http://%s/argocd](http://%s/argocd) (usuário: `admin`).\n' \
+                "${TRAEFIK_ENDPOINT}" "${TRAEFIK_ENDPOINT}"
+              printf -- '- Grafana: [http://%s/grafana](http://%s/grafana) (usuário: `admin`).\n' \
                 "${TRAEFIK_ENDPOINT}" "${TRAEFIK_ENDPOINT}"
               echo ""
               echo '```bash'
@@ -416,14 +426,21 @@ jobs:
               echo "O endereço do Load Balancer Traefik ainda não está disponível neste run."
             fi
             echo ""
-            echo 'A senha do usuário `admin` permanece no OCI Vault; ela não é incluída neste sumário.'
-            echo "Execute o comando abaixo em um terminal local confiável para recuperar a senha. A saída não é coletada pelo workflow:"
+            echo 'As senhas administrativas permanecem no OCI Vault; nenhum valor de senha é incluído neste sumário.'
+            echo "Execute o comando abaixo em um terminal local confiável para recuperar as senhas. A saída não é coletada pelo workflow:"
             if [[ -n "${VAULT_ID:-}" ]]; then
               echo ""
               echo '```bash'
               printf 'oci --auth api_key --region sa-saopaulo-1 secrets secret-bundle get-secret-bundle-by-name \\\n'
               printf '  --vault-id "%s" \\\n' "${VAULT_ID}"
               printf '  --secret-name solidarytech-argocd-admin-password \\\n'
+              printf '  --stage CURRENT \\\n'
+              printf '  --query '\''data."secret-bundle-content".content'\'' \\\n'
+              printf '  --raw-output | base64 --decode\n'
+              echo ""
+              printf 'oci --auth api_key --region sa-saopaulo-1 secrets secret-bundle get-secret-bundle-by-name \\\n'
+              printf '  --vault-id "%s" \\\n' "${VAULT_ID}"
+              printf '  --secret-name solidarytech-grafana-admin-password \\\n'
               printf '  --stage CURRENT \\\n'
               printf '  --query '\''data."secret-bundle-content".content'\'' \\\n'
               printf '  --raw-output | base64 --decode\n'

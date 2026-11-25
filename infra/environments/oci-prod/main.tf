@@ -24,6 +24,8 @@ module "oke" {
   private_oke_subnet_id = module.network.private_oke_subnet_id
   node_shape            = var.oke_node_shape
   node_count            = var.oke_node_count
+  node_ocpus            = var.oke_node_ocpus
+  node_memory_in_gbs    = var.oke_node_memory_in_gbs
   fault_domains         = var.oke_fault_domains
   tags                  = local.finops_tags
 }

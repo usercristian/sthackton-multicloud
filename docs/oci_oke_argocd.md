@@ -166,16 +166,6 @@ graph LR
     SA -.-> D1 & D2 & D3
 ```
 
-### Contratos Técnicos do Runtime OKE
-
-| Regra de Runtime | Configuração Aplicada | Motivo Técnico |
-| --- | --- | --- |
-| **Fully Qualified Images** | `docker.io/library/...` e `gru.ocir.io/...` | CRI-O no Oracle Linux opera com `short-name-mode = "enforcing"` |
-| **Alinhamento OCIR** | `--docker-server=gru.ocir.io` no `ocir-secret` | Kubelet exige correspondência exata entre o host da imagem e o Secret |
-| **Histórico Limpo** | `revisionHistoryLimit: 1` nos Deployments | Evita acúmulo de ReplicaSets inativos (`0/0`) no painel do ArgoCD |
-| **Gunicorn Non-Root** | `ENV HOME=/tmp` nos Dockerfiles Python | Permite criação do socket de controle do Gunicorn 27 sem privilégios |
-| **DB Init Idempotente** | `SELECT ... \gexec` no Job `db-init` | Cria `ngos` e `donations` condicionalmente antes de aplicar schemas |
-
 ## 5. Ciclo de Vida ArgoCD
 
 ```mermaid
