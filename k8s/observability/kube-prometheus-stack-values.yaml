@@ -1,3 +1,6 @@
+crds:
+  enabled: true
+
 defaultRules:
   create: false
 
@@ -17,6 +20,10 @@ kubeProxy:
   enabled: false
 
 prometheusOperator:
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
   nodeSelector:
     kubernetes.io/arch: arm64
     kubernetes.io/os: linux
