@@ -161,6 +161,7 @@ fi
 echo "Instalando ou atualizando Traefik e ArgoCD..."
 helm repo add traefik https://traefik.github.io/charts --force-update
 helm repo add argo https://argoproj.github.io/argo-helm --force-update
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
 helm repo update
 
 helm upgrade --install traefik traefik/traefik \
@@ -351,6 +352,96 @@ print(json.dumps({
 }))
 PY
 unset GRAFANA_ADMIN_PASSWORD
+
+echo "Instalando ou atualizando os CRDs do Prometheus Operator..."
+PROMETHEUS_OPERATOR_CRDS=(
+  alertmanagerconfigs.monitoring.coreos.com
+  alertmanagers.monitoring.coreos.com
+  podmonitors.monitoring.coreos.com
+  probes.monitoring.coreos.com
+  prometheusagents.monitoring.coreos.com
+  prometheuses.monitoring.coreos.com
+  prometheusrules.monitoring.coreos.com
+  scrapeconfigs.monitoring.coreos.com
+  servicemonitors.monitoring.coreos.com
+  thanosrulers.monitoring.coreos.com
+)
+
+# Adota apenas CRDs v0.95.2 sem proprietário de outro release Helm ou Application ArgoCD.
+for crd in "${PROMETHEUS_OPERATOR_CRDS[@]}"; do
+  if ! CRD_JSON=$(kubectl get crd "${crd}" --ignore-not-found -o json); then
+    echo "ERRO: Não foi possível consultar o CRD '${crd}' para validar sua propriedade." >&2
+    exit 1
+  fi
+  if [[ -z "${CRD_JSON}" || "${CRD_JSON}" == "null" ]]; then
+    continue
+  fi
+
+  CRD_OWNERSHIP=$(jq -r '[
+    .metadata.labels["app.kubernetes.io/managed-by"] // "",
+    .metadata.annotations["meta.helm.sh/release-name"] // "",
+    .metadata.annotations["meta.helm.sh/release-namespace"] // "",
+    .metadata.annotations["operator.prometheus.io/version"] // "",
+    .metadata.annotations["argocd.argoproj.io/tracking-id"] // "",
+    .metadata.labels["app.kubernetes.io/instance"] // "",
+    .metadata.labels["argocd.argoproj.io/instance"] // ""
+  ] | join("|")' <<<"${CRD_JSON}")
+  IFS='|' read -r CRD_MANAGED_BY CRD_HELM_RELEASE CRD_HELM_NAMESPACE \
+    CRD_OPERATOR_VERSION CRD_ARGO_TRACKING_ID CRD_APP_INSTANCE CRD_ARGO_INSTANCE \
+    <<<"${CRD_OWNERSHIP}"
+
+  if [[ -n "${CRD_MANAGED_BY}" && "${CRD_MANAGED_BY}" != "Helm" ]]; then
+    echo "ERRO: CRD '${crd}' pertence a '${CRD_MANAGED_BY}', não será transferido ao Helm." >&2
+    exit 1
+  fi
+  if [[ -n "${CRD_HELM_RELEASE}" && "${CRD_HELM_RELEASE}" != "prometheus-operator-crds" ]] ||
+    [[ -n "${CRD_HELM_NAMESPACE}" && "${CRD_HELM_NAMESPACE}" != "observability" ]]; then
+    echo "ERRO: CRD '${crd}' contém metadados de outro release Helm; não será transferido." >&2
+    exit 1
+  fi
+  if [[ "${CRD_OPERATOR_VERSION}" != "0.95.2" ]]; then
+    echo "ERRO: CRD '${crd}' não declara a versão esperada do Operator (0.95.2); não será transferido." >&2
+    exit 1
+  fi
+  if [[ -n "${CRD_ARGO_TRACKING_ID}" &&
+    "${CRD_ARGO_TRACKING_ID}" != "solidarytech-observability-oci:"* ]]; then
+    echo "ERRO: CRD '${crd}' está associado a outra Application ArgoCD; não será transferido." >&2
+    exit 1
+  fi
+  if [[ -n "${CRD_APP_INSTANCE}" &&
+    "${CRD_APP_INSTANCE}" != "solidarytech-observability-oci" &&
+    "${CRD_APP_INSTANCE}" != "kube-prometheus-stack" ]]; then
+    echo "ERRO: CRD '${crd}' está associado a outra instância; não será transferido." >&2
+    exit 1
+  fi
+  if [[ -n "${CRD_ARGO_INSTANCE}" &&
+    "${CRD_ARGO_INSTANCE}" != "solidarytech-observability-oci" ]]; then
+    echo "ERRO: CRD '${crd}' está associado a outra Application ArgoCD; não será transferido." >&2
+    exit 1
+  fi
+
+  echo "Transferindo a propriedade do CRD existente '${crd}' para o release Helm..."
+  kubectl label crd "${crd}" app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+  kubectl annotate crd "${crd}" \
+    meta.helm.sh/release-name=prometheus-operator-crds \
+    meta.helm.sh/release-namespace=observability \
+    --overwrite >/dev/null
+  if [[ -n "${CRD_APP_INSTANCE}" ]]; then
+    kubectl label crd "${crd}" app.kubernetes.io/instance- >/dev/null
+  fi
+  if [[ -n "${CRD_ARGO_INSTANCE}" ]]; then
+    kubectl label crd "${crd}" argocd.argoproj.io/instance- >/dev/null
+  fi
+  if [[ -n "${CRD_ARGO_TRACKING_ID}" ]]; then
+    kubectl annotate crd "${crd}" argocd.argoproj.io/tracking-id- >/dev/null
+  fi
+done
+
+helm upgrade --install prometheus-operator-crds prometheus-community/prometheus-operator-crds \
+  --version 33.0.2 \
+  --namespace observability \
+  --wait \
+  --timeout 10m
 
 kubectl apply -f - >/dev/null <<'YAML'
 apiVersion: networking.k8s.io/v1
