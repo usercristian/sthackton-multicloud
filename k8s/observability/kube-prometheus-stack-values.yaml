@@ -1,3 +1,6 @@
+defaultRules:
+  create: false
+
 alertmanager:
   enabled: false
 
